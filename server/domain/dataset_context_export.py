@@ -58,6 +58,9 @@ def _candidate_to_dict(candidate: DatasetCandidate, rank: int) -> dict[str, Any]
         "why_partial": candidate.why_partial,
         "metadata_warnings": candidate.metadata_warnings,
         "evidence_conflicts": candidate.evidence_conflicts,
+        "score_breakdown": (
+            candidate.score_breakdown.model_dump() if candidate.score_breakdown else None
+        ),
     }
 
 
@@ -197,6 +200,26 @@ def _format_candidate_markdown(candidate: DatasetCandidate, rank: int) -> str:
         lines.append("- **Evidence conflicts**:")
         for conflict in candidate.evidence_conflicts:
             lines.append(f"  - {conflict}")
+
+    if candidate.score_breakdown:
+        breakdown = candidate.score_breakdown
+        lines.append("- **Score breakdown (debug)**:")
+        lines.append(f"  - final score: {breakdown.final_score:.3f}")
+        lines.append(f"  - match status: {breakdown.match_status}")
+        lines.append(f"  - evidence coverage: {breakdown.evidence_coverage:.3f}")
+        if breakdown.retrieval_strategy:
+            lines.append(f"  - retrieval strategy: {breakdown.retrieval_strategy}")
+        lines.append(f"  - warnings: {breakdown.warnings_count}")
+        lines.append(f"  - evidence conflicts: {breakdown.evidence_conflicts_count}")
+        for slot in ("disease", "tissue", "assay", "organism"):
+            slot_breakdown = getattr(breakdown, slot)
+            status = "present" if slot_breakdown.present else "absent"
+            fields = ", ".join(slot_breakdown.fields) if slot_breakdown.fields else "—"
+            terms = ", ".join(slot_breakdown.matched_terms) if slot_breakdown.matched_terms else "—"
+            line = f"  - {slot}: {status}; fields: {fields}; terms: {terms}"
+            if slot == "tissue" and hasattr(slot_breakdown, "evidence_type"):
+                line += f"; tissue type: {slot_breakdown.evidence_type}"
+            lines.append(line)
 
     if candidate.evidence_snippets:
         lines.append("- **Evidence snippets**:")

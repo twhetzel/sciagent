@@ -4,6 +4,11 @@ from __future__ import annotations
 
 from .dataset_search import ConceptMapping, InterpretedQuery
 from .ontology_grounder import OntologyGrounder
+from .synonym_classification import (
+    GEO_REPOSITORY,
+    ensure_aliases,
+    retrieval_terms_for_mapping,
+)
 
 _default_grounder = OntologyGrounder()
 
@@ -32,30 +37,36 @@ def ground_interpreted_query(interpreted: InterpretedQuery) -> list[ConceptMappi
     return _default_grounder.ground_interpreted_query(interpreted)
 
 
-def search_terms_for_mapping(mapping: ConceptMapping) -> list[str]:
-    """All terms to use when searching repositories for a grounded concept."""
-    terms = {mapping.label.lower(), mapping.query_term.lower()}
-    terms.update(s.lower() for s in mapping.synonyms)
+def enrich_concept_mappings(
+    mappings: list[ConceptMapping],
+    *,
+    repository: str = GEO_REPOSITORY,
+) -> list[ConceptMapping]:
+    """Attach classified synonym metadata to grounded concepts."""
+    return [ensure_aliases(mapping, repository=repository) for mapping in mappings]
 
-    from .ontology_providers.curated import SEED_CONCEPTS
 
-    seed = SEED_CONCEPTS.get(mapping.query_term) or SEED_CONCEPTS.get(mapping.query_term.lower())
-    if seed and seed.get("slot") == mapping.slot:
-        terms.update(s.lower() for s in seed.get("synonyms", []))
-
-    return sorted(terms)
+def search_terms_for_mapping(
+    mapping: ConceptMapping,
+    *,
+    repository: str = GEO_REPOSITORY,
+) -> list[str]:
+    """Terms safe for broad repository search (GEO retrieval)."""
+    return retrieval_terms_for_mapping(mapping, repository=repository)
 
 
 def build_geo_search_term(mappings: list[ConceptMapping]) -> str:
-    """Build a GEO query from grounded concept synonym groups."""
+    """Build a GEO query from retrieval-safe grounded concept terms."""
     if not mappings:
         return ""
 
     groups: list[str] = []
     for mapping in mappings:
-        terms = search_terms_for_mapping(mapping)
+        terms = retrieval_terms_for_mapping(mapping, repository=GEO_REPOSITORY)
+        if not terms:
+            continue
         if len(terms) == 1:
-            groups.append(f'"{terms[0]}"')
+            groups.append(f'"{terms[0]}"' if " " in terms[0] else terms[0])
         else:
             quoted = [f'"{term}"' if " " in term else term for term in terms]
             groups.append(f"({' OR '.join(quoted)})")

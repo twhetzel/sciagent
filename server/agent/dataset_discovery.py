@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from domain.dataset_annotation import annotate_dataset_candidates
 from domain.dataset_search import DatasetSearchResult, InterpretedQuery
-from domain.ontology_grounding import ground_interpreted_query
+from domain.ontology_grounding import enrich_concept_mappings, ground_interpreted_query
 from domain.query_interpretation import interpret_dataset_query
 from domain.ranking import rank_annotated_candidates
 from tools.geo_dataset_search import (
@@ -34,7 +34,7 @@ def interpret_query(query: str) -> InterpretedQuery:
 
 def ground_query(interpreted: InterpretedQuery):
     """Step 2: provider-based ontology grounding of requested facets."""
-    return ground_interpreted_query(interpreted)
+    return enrich_concept_mappings(ground_interpreted_query(interpreted))
 
 
 def search_repository(concept_mappings, max_results: int = 15) -> dict:

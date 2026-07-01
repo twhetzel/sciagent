@@ -6,7 +6,24 @@ import re
 from typing import Iterable
 
 from .dataset_search import ConceptMapping, EvidenceSnippet
-from .ontology_grounding import search_terms_for_mapping
+from .synonym_classification import (
+    ensure_aliases,
+    evidence_terms_for_mapping,
+    has_acronym_context,
+    term_in_text,
+    terms_matching_in_text,
+)
+
+DERIVED_TISSUE_MODEL_PATTERNS: tuple[str, ...] = (
+    r"\borganoids?\b",
+    r"\bcolonoids?\b",
+    r"\benteroids?\b",
+    r"\bgut organoids?\b",
+    r"\bintestinal organoids?\b",
+)
+
+DISEASE_EVIDENCE_FIELDS = ("title", "summary")
+TISSUE_EVIDENCE_FIELDS = ("title", "summary", "sample_titles")
 
 ASSAY_DETECTORS: list[tuple[str, list[str]]] = [
     ("ATAC-seq", [r"\batac[\s-]?seq\b", r"transposase-accessible"]),
@@ -55,16 +72,6 @@ SLOT_FIELD_PRIORITY = (
 
 def _normalize_text(text: str) -> str:
     return re.sub(r"\s+", " ", text.lower()).strip()
-
-
-def _term_in_text(term: str, text: str) -> bool:
-    normalized_term = _normalize_text(term)
-    normalized_text = _normalize_text(text)
-    if not normalized_term or not normalized_text:
-        return False
-    if " " in normalized_term:
-        return normalized_term in normalized_text
-    return re.search(rf"\b{re.escape(normalized_term)}\b", normalized_text) is not None
 
 
 def _first_pattern_match(text: str, patterns: Iterable[str]) -> bool:
@@ -278,11 +285,10 @@ def _slot_supported_by_evidence(slot: str, mapping: ConceptMapping, fields: dict
         return detect_observed_tissue(fields, mapping) is not None
 
     return any(
-        _term_in_text(term, text)
+        bool(terms_matching_in_text(mapping, text))
         for field in SLOT_FIELD_PRIORITY
         for text in [fields.get(field, "")]
         if text
-        for term in search_terms_for_mapping(mapping)
     )
 
 
@@ -329,7 +335,7 @@ def detect_narrative_organism(fields: dict[str, str]) -> str | None:
 def _organism_matches_mapping(observed: str, mapping: ConceptMapping) -> bool:
     if mapping.slot != "organism":
         return False
-    return any(_term_in_text(term, observed) for term in search_terms_for_mapping(mapping))
+    return any(term_in_text(term, observed) for term in evidence_terms_for_mapping(mapping))
 
 
 def organism_supported_by_evidence(
@@ -401,12 +407,141 @@ def detect_observed_organism(fields: dict[str, str], mapping: ConceptMapping | N
     return None
 
 
+def _matched_terms_in_fields(
+    mapping: ConceptMapping,
+    fields: dict[str, str],
+    field_names: tuple[str, ...],
+) -> tuple[bool, list[str], list[str]]:
+    matched_fields: list[str] = []
+    matched_terms: set[str] = set()
+    for field_name in field_names:
+        text = fields.get(field_name, "")
+        if not text:
+            continue
+        terms = terms_matching_in_text(mapping, text)
+        if terms:
+            matched_fields.append(field_name)
+            matched_terms.update(terms)
+    return bool(matched_fields), matched_fields, sorted(matched_terms)
+
+
+def _has_derived_tissue_model_signal(text: str) -> bool:
+    normalized = _normalize_text(text)
+    return any(re.search(pattern, normalized, re.I) for pattern in DERIVED_TISSUE_MODEL_PATTERNS)
+
+
+def _tissue_match_is_contextual_only(
+    mapping: ConceptMapping,
+    fields: dict[str, str],
+    evidence_fields: list[str],
+) -> bool:
+    enriched = ensure_aliases(mapping)
+    found_contextual = False
+    for field_name in evidence_fields:
+        text = fields.get(field_name, "")
+        if not text:
+            continue
+        for alias in enriched.aliases:
+            if alias.safe_for_retrieval and term_in_text(alias.term, text):
+                return False
+        for alias in enriched.aliases:
+            if alias.requires_context and term_in_text(alias.term, text):
+                if has_acronym_context(text, enriched):
+                    found_contextual = True
+    return found_contextual
+
+
+def extract_disease_evidence_details(
+    mapping: ConceptMapping | None,
+    fields: dict[str, str],
+) -> tuple[bool, list[str], list[str]]:
+    if not mapping:
+        return False, [], []
+    return _matched_terms_in_fields(mapping, fields, DISEASE_EVIDENCE_FIELDS)
+
+
+def extract_tissue_evidence_details(
+    mapping: ConceptMapping | None,
+    fields: dict[str, str],
+) -> tuple[bool, list[str], list[str], str]:
+    if not mapping:
+        return False, [], [], "absent"
+
+    present, matched_fields, matched_terms = _matched_terms_in_fields(
+        mapping,
+        fields,
+        TISSUE_EVIDENCE_FIELDS,
+    )
+    if not present:
+        return False, [], [], "absent"
+
+    evidence_text = " ".join(fields.get(field_name, "") for field_name in matched_fields)
+    if _has_derived_tissue_model_signal(evidence_text):
+        return present, matched_fields, matched_terms, "derived_model"
+
+    direct_fields = {"title", "summary"}
+    if matched_fields and not any(field in direct_fields for field in matched_fields):
+        return present, matched_fields, matched_terms, "inferred"
+
+    if _tissue_match_is_contextual_only(mapping, fields, matched_fields):
+        return present, matched_fields, matched_terms, "inferred"
+
+    return present, matched_fields, matched_terms, "direct"
+
+
+def extract_assay_evidence_details(
+    mapping: ConceptMapping | None,
+    fields: dict[str, str],
+) -> tuple[bool, list[str], list[str]]:
+    if not mapping:
+        return False, [], []
+
+    matches = _assay_evidence_fields(fields, mapping)
+    if not matches:
+        return False, [], []
+
+    matched_fields = [field_name for field_name, _ in matches]
+    requested = _normalize_text(mapping.label)
+    matched_terms: set[str] = set()
+    for field_name, text in matches:
+        for assay in _assays_in_text(text, field_name=field_name):
+            if _normalize_text(assay) == requested:
+                matched_terms.add(assay)
+    if not matched_terms:
+        matched_terms.add(mapping.label)
+    return True, matched_fields, sorted(matched_terms)
+
+
+def extract_organism_evidence_details(
+    mapping: ConceptMapping | None,
+    fields: dict[str, str],
+) -> tuple[bool, list[str], list[str]]:
+    if not mapping:
+        return False, [], []
+
+    supported, observed, evidence_field = organism_supported_by_evidence(fields, mapping)
+    if not supported or not evidence_field:
+        return False, [], []
+
+    text = fields.get(evidence_field, "")
+    matched_terms = sorted(
+        {
+            term
+            for term in evidence_terms_for_mapping(mapping)
+            if term_in_text(term, text)
+        }
+    )
+    if observed:
+        matched_terms = sorted(set(matched_terms) | {_normalize_text(observed)})
+    return True, [evidence_field], matched_terms
+
+
 def detect_observed_disease(fields: dict[str, str], mapping: ConceptMapping | None) -> str | None:
     if not mapping:
         return None
     for field in ("title", "summary"):
         text = fields.get(field, "")
-        if text and any(_term_in_text(term, text) for term in search_terms_for_mapping(mapping)):
+        if text and terms_matching_in_text(mapping, text):
             return mapping.label
     return None
 
@@ -416,7 +551,7 @@ def detect_observed_tissue(fields: dict[str, str], mapping: ConceptMapping | Non
         return None
     for field in ("title", "summary", "sample_titles"):
         text = fields.get(field, "")
-        if text and any(_term_in_text(term, text) for term in search_terms_for_mapping(mapping)):
+        if text and terms_matching_in_text(mapping, text):
             return mapping.label
     return None
 
@@ -454,19 +589,13 @@ def extract_evidence_for_mapping(
             )
         return supported, snippets
 
-    search_terms = search_terms_for_mapping(mapping)
     for field in SLOT_FIELD_PRIORITY:
         text = fields.get(field, "")
         if not text:
             continue
 
-        matched_labels = [
-            mapping.label
-            for term in search_terms
-            if _term_in_text(term, text)
-        ]
-
-        if matched_labels:
+        if terms_matching_in_text(mapping, text):
+            matched_labels = [mapping.label]
             excerpt = text if len(text) <= 240 else text[:237] + "..."
             snippets.append(
                 EvidenceSnippet(

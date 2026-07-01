@@ -592,6 +592,73 @@
   color: var(--accent-info);
 }
 
+.score-breakdown {
+  margin-top: 0.75rem;
+  border-top: 1px dashed var(--border-glass);
+  padding-top: 0.5rem;
+}
+
+.score-breakdown-toggle {
+  background: transparent;
+  border: 1px solid var(--border-glass);
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.score-breakdown-toggle:hover {
+  color: var(--text-primary);
+  border-color: var(--chip-border);
+}
+
+.score-breakdown-body {
+  margin-top: 0.5rem;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.score-breakdown-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.75rem;
+  margin-bottom: 0.5rem;
+  color: var(--text-muted);
+}
+
+.score-breakdown-row {
+  display: grid;
+  grid-template-columns: 4.5rem 4.5rem minmax(0, 1fr);
+  gap: 0.35rem 0.5rem;
+  padding: 0.2rem 0;
+  border-bottom: 1px solid var(--border-glass);
+}
+
+.score-breakdown-row:last-child {
+  border-bottom: none;
+}
+
+.score-breakdown-slot {
+  font-weight: 600;
+  color: var(--text-primary);
+  text-transform: capitalize;
+}
+
+.score-breakdown-status--present {
+  color: var(--accent-success);
+}
+
+.score-breakdown-status--absent {
+  color: var(--text-muted);
+}
+
+.score-breakdown-detail {
+  grid-column: 3;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+}
+
 .dataset-empty {
   color: var(--text-secondary);
   font-size: 0.9rem;

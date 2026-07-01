@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from .dataset_search import ConceptMapping, DatasetCandidate
+from .score_breakdown import build_score_breakdown
 
 SLOT_WEIGHTS = {
     "disease": 0.30,
@@ -43,11 +44,19 @@ def rank_annotated_candidates(
         else:
             match_status = "partial"
 
+        score_breakdown = build_score_breakdown(
+            candidate,
+            concept_mappings,
+            score=score,
+            match_status=match_status,
+            evidence_coverage=evidence_coverage,
+        )
         ranked.append(
             candidate.model_copy(
                 update={
                     "score": round(score, 3),
                     "match_status": match_status,
+                    "score_breakdown": score_breakdown,
                 }
             )
         )

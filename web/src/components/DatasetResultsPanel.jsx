@@ -57,6 +57,59 @@ function requestedAssay(candidate) {
   return candidate.requested_concepts?.find((mapping) => mapping.slot === 'assay')?.label
 }
 
+function ScoreBreakdownPanel({ breakdown }) {
+  const [expanded, setExpanded] = useState(false)
+  if (!breakdown) return null
+
+  function renderSlot(label, slot) {
+    const status = slot.present ? 'present' : 'absent'
+    const fields = slot.fields?.length ? slot.fields.join(', ') : '—'
+    const terms = slot.matched_terms?.length ? slot.matched_terms.join(', ') : '—'
+    return (
+      <div className="score-breakdown-row" key={label}>
+        <span className="score-breakdown-slot">{label}</span>
+        <span className={`score-breakdown-status score-breakdown-status--${status}`}>{status}</span>
+        <span className="score-breakdown-detail">fields: {fields}</span>
+        <span className="score-breakdown-detail">terms: {terms}</span>
+        {label === 'tissue' && slot.evidence_type ? (
+          <span className="score-breakdown-detail">type: {slot.evidence_type}</span>
+        ) : null}
+      </div>
+    )
+  }
+
+  return (
+    <div className="score-breakdown">
+      <button
+        type="button"
+        className="score-breakdown-toggle"
+        onClick={() => setExpanded((value) => !value)}
+        aria-expanded={expanded}
+      >
+        Score breakdown (debug)
+      </button>
+      {expanded && (
+        <div className="score-breakdown-body">
+          <div className="score-breakdown-summary">
+            <span>Score {breakdown.final_score?.toFixed(3)}</span>
+            <span>Status {breakdown.match_status}</span>
+            <span>Coverage {breakdown.evidence_coverage?.toFixed(3)}</span>
+            {breakdown.retrieval_strategy ? (
+              <span>Strategy {breakdown.retrieval_strategy}</span>
+            ) : null}
+            <span>Warnings {breakdown.warnings_count}</span>
+            <span>Conflicts {breakdown.evidence_conflicts_count}</span>
+          </div>
+          {renderSlot('disease', breakdown.disease)}
+          {renderSlot('tissue', breakdown.tissue)}
+          {renderSlot('assay', breakdown.assay)}
+          {renderSlot('organism', breakdown.organism)}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function DatasetCard({ candidate, rank }) {
   const requestedAssayLabel = requestedAssay(candidate)
   const assayMatched = candidate.matched_concepts?.some((mapping) => mapping.slot === 'assay')
@@ -169,6 +222,7 @@ function DatasetCard({ candidate, rank }) {
       )}
 
       <EvidenceList evidence={candidate.evidence_snippets} />
+      <ScoreBreakdownPanel breakdown={candidate.score_breakdown} />
     </article>
   )
 }

@@ -5,6 +5,57 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 
+class SynonymAlias(BaseModel):
+    """Metadata for one ontology label, synonym, or acronym."""
+
+    term: str
+    source: str
+    category: str = Field(
+        ...,
+        description="preferred_label, exact_synonym, related_synonym, acronym, or abbreviation",
+    )
+    safe_for_retrieval: bool = Field(
+        ...,
+        description="Whether the term may be used in broad repository search",
+    )
+    requires_context: bool = Field(
+        ...,
+        description="Whether evidence matching requires nearby supporting terms",
+    )
+
+
+class SlotEvidenceBreakdown(BaseModel):
+    """Per-facet evidence audit for ranking."""
+
+    present: bool = False
+    fields: list[str] = Field(default_factory=list)
+    matched_terms: list[str] = Field(default_factory=list)
+
+
+class TissueEvidenceBreakdown(SlotEvidenceBreakdown):
+    """Tissue evidence with direct vs model-derived vs inferred classification."""
+
+    evidence_type: str = Field(
+        default="absent",
+        description="direct, derived_model, inferred, or absent",
+    )
+
+
+class ScoreBreakdown(BaseModel):
+    """Developer/debug audit of how a candidate was scored and matched."""
+
+    disease: SlotEvidenceBreakdown = Field(default_factory=SlotEvidenceBreakdown)
+    tissue: TissueEvidenceBreakdown = Field(default_factory=TissueEvidenceBreakdown)
+    assay: SlotEvidenceBreakdown = Field(default_factory=SlotEvidenceBreakdown)
+    organism: SlotEvidenceBreakdown = Field(default_factory=SlotEvidenceBreakdown)
+    warnings_count: int = 0
+    evidence_conflicts_count: int = 0
+    retrieval_strategy: str | None = None
+    evidence_coverage: float = 0.0
+    final_score: float = 0.0
+    match_status: str = "partial"
+
+
 class EvidenceSnippet(BaseModel):
     """Text excerpt from a dataset record that supports a match."""
 
@@ -26,6 +77,10 @@ class ConceptMapping(BaseModel):
     ontology: str = Field(..., description="Ontology prefix, e.g. MONDO")
     iri: str | None = Field(default=None, description="Ontology term IRI when available")
     synonyms: list[str] = Field(default_factory=list, description="Search synonyms")
+    aliases: list[SynonymAlias] = Field(
+        default_factory=list,
+        description="Classified synonym metadata for retrieval and evidence",
+    )
     match_type: str = Field(default="unknown", description="How the concept was matched")
     source: str = Field(default="unknown", description="Grounding provider that produced the match")
     confidence: float = Field(default=0.0, description="Relative confidence in the grounding")
@@ -84,6 +139,10 @@ class DatasetCandidate(BaseModel):
     why_partial: list[str] = Field(default_factory=list)
     metadata_warnings: list[str] = Field(default_factory=list)
     evidence_conflicts: list[str] = Field(default_factory=list)
+    score_breakdown: ScoreBreakdown | None = Field(
+        default=None,
+        description="Developer/debug audit of ranking inputs and evidence",
+    )
 
 
 class DatasetSearchResult(BaseModel):
