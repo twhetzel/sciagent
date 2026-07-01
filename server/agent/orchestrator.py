@@ -703,7 +703,14 @@ class AgentOrchestrator:
             response += "\n"
 
         if not result.candidates:
-            response += f"No matching datasets were found ({result.total_found} raw GEO hits).\n"
+            if result.total_found:
+                response += (
+                    f"GEO search found {result.total_found} potential matches, "
+                    "but record retrieval failed or returned no usable metadata. "
+                    "Try again in a moment or set PUBMED_EMAIL for NCBI rate limits.\n"
+                )
+            else:
+                response += f"No matching datasets were found ({result.total_found} raw GEO hits).\n"
             return response
 
         response += f"**Top ranked datasets** ({len(result.candidates)} shown, {result.total_found} total GEO hits):\n\n"

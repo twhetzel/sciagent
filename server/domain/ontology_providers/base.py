@@ -21,6 +21,13 @@ CONFIDENCE_BY_MATCH: dict[str, float] = {
     "ai_expanded_synonym": 0.68,
 }
 
+SLOT_ONTOLOGY_PREFERENCE: dict[str, list[str]] = {
+    "disease": ["MONDO", "HP"],
+    "tissue": ["UBERON"],
+    "assay": ["OBI", "GO"],
+    "organism": ["NCBITAXON"],
+}
+
 
 class OntologyProvider(Protocol):
     """Lookup ontology concepts for a facet term."""
@@ -32,11 +39,29 @@ class OntologyProvider(Protocol):
         ...
 
 
-def merge_concept_candidates(candidates: list[ConceptMapping]) -> list[ConceptMapping]:
+def _ontology_preference_rank(slot: str, candidate: ConceptMapping) -> int:
+    preferences = SLOT_ONTOLOGY_PREFERENCE.get(slot, [])
+    ontology = candidate.ontology.upper()
+    for index, prefix in enumerate(preferences):
+        if ontology.startswith(prefix):
+            return index
+    return len(preferences)
+
+
+def merge_concept_candidates(
+    candidates: list[ConceptMapping],
+    *,
+    slot: str | None = None,
+) -> list[ConceptMapping]:
     """Deduplicate by CURIE, keeping the highest-confidence mapping."""
     best_by_curie: dict[str, ConceptMapping] = {}
     for candidate in candidates:
         existing = best_by_curie.get(candidate.curie)
         if existing is None or candidate.confidence > existing.confidence:
             best_by_curie[candidate.curie] = candidate
-    return sorted(best_by_curie.values(), key=lambda item: (-item.confidence, item.label))
+
+    def sort_key(item: ConceptMapping) -> tuple[float, int, str]:
+        pref = _ontology_preference_rank(slot or item.slot, item)
+        return (-item.confidence, pref, item.label.lower())
+
+    return sorted(best_by_curie.values(), key=sort_key)

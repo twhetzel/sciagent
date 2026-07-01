@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 import os
+import time
 from typing import Any
 
 import requests
@@ -14,8 +16,12 @@ from domain.ontology_grounding import (
     build_geo_search_queries,
 )
 
+logger = logging.getLogger(__name__)
+
 NCBI_BASE = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/"
 GEO_REPOSITORY = "GEO"
+NCBI_REQUEST_INTERVAL_SEC = 0.34
+_last_ncbi_request_at = 0.0
 
 
 def _ncbi_params() -> dict[str, str]:
@@ -23,6 +29,14 @@ def _ncbi_params() -> dict[str, str]:
         "tool": os.getenv("PUBMED_TOOL", "sciagent_studio"),
         "email": os.getenv("PUBMED_EMAIL", ""),
     }
+
+
+def _throttle_ncbi_request() -> None:
+    global _last_ncbi_request_at
+    elapsed = time.monotonic() - _last_ncbi_request_at
+    if elapsed < NCBI_REQUEST_INTERVAL_SEC:
+        time.sleep(NCBI_REQUEST_INTERVAL_SEC - elapsed)
+    _last_ncbi_request_at = time.monotonic()
 
 
 def _parse_sample_count(value: Any) -> int | None:
@@ -122,6 +136,7 @@ def normalize_geo_records(records: list[dict[str, Any]]) -> list[DatasetCandidat
 
 
 def _geo_esearch(search_term: str, max_results: int) -> tuple[list[str], int]:
+    _throttle_ncbi_request()
     search_response = requests.get(
         f"{NCBI_BASE}esearch.fcgi",
         params={
@@ -144,25 +159,29 @@ def _geo_esummary(id_list: list[str]) -> list[dict[str, Any]]:
     if not id_list:
         return []
 
-    summary_response = requests.get(
-        f"{NCBI_BASE}esummary.fcgi",
-        params={
-            "db": "gds",
-            "id": ",".join(id_list),
-            "retmode": "json",
-            **_ncbi_params(),
-        },
-        timeout=15,
-    )
-    summary_response.raise_for_status()
-    summary_data = summary_response.json()
-    result_block = summary_data.get("result", {})
-
     records: list[dict[str, Any]] = []
-    for uid in id_list:
-        record = result_block.get(uid, {})
-        if isinstance(record, dict):
-            records.append(record)
+    chunk_size = 100
+    for start in range(0, len(id_list), chunk_size):
+        chunk = id_list[start : start + chunk_size]
+        _throttle_ncbi_request()
+        summary_response = requests.get(
+            f"{NCBI_BASE}esummary.fcgi",
+            params={
+                "db": "gds",
+                "id": ",".join(chunk),
+                "retmode": "json",
+                **_ncbi_params(),
+            },
+            timeout=15,
+        )
+        summary_response.raise_for_status()
+        summary_data = summary_response.json()
+        result_block = summary_data.get("result", {})
+
+        for uid in chunk:
+            record = result_block.get(uid, {})
+            if isinstance(record, dict):
+                records.append(record)
     return records
 
 
@@ -173,7 +192,7 @@ def fetch_geo_repository_records(
     """
     Search Repository: run multi-strategy GEO queries and deduplicate by accession.
 
-    Record normalization into DatasetCandidate happens in normalize_geo_records().
+    esearch runs per strategy; esummary runs once for merged IDs to respect NCBI limits.
     """
     search_queries = build_geo_search_queries(concept_mappings)
     if not search_queries:
@@ -188,13 +207,17 @@ def fetch_geo_repository_records(
         }
 
     per_strategy_limit = max(5, max_results)
-    merged_records: dict[str, dict[str, Any]] = {}
     strategy_summaries: list[dict[str, str | int]] = []
     max_total_found = 0
     primary_search_term = search_queries[0][1]
+    id_to_provenance: dict[str, tuple[str, str]] = {}
+    ordered_ids: list[str] = []
+    errors: list[str] = []
 
-    try:
-        for strategy, search_term in search_queries:
+    for strategy, search_term in search_queries:
+        if len(ordered_ids) >= max_results:
+            break
+        try:
             id_list, total_found = _geo_esearch(search_term, per_strategy_limit)
             max_total_found = max(max_total_found, total_found)
             strategy_summaries.append(
@@ -206,68 +229,82 @@ def fetch_geo_repository_records(
                 }
             )
 
-            for record in _geo_esummary(id_list):
-                accession = _record_accession(record)
-                if not accession:
+            for uid in id_list:
+                if uid in id_to_provenance:
+                    existing_strategy = id_to_provenance[uid][0]
+                    existing_priority = STRATEGY_PRIORITY.get(existing_strategy, 99)
+                    new_priority = STRATEGY_PRIORITY.get(strategy, 99)
+                    if new_priority < existing_priority:
+                        id_to_provenance[uid] = (strategy, search_term)
                     continue
 
-                enriched = dict(record)
-                enriched["_retrieval_strategy"] = strategy
-                enriched["_retrieval_search_term"] = search_term
+                id_to_provenance[uid] = (strategy, search_term)
+                ordered_ids.append(uid)
+                if len(ordered_ids) >= max_results:
+                    break
+        except requests.exceptions.RequestException as exc:
+            logger.warning("GEO esearch failed for strategy %s: %s", strategy, exc)
+            errors.append(f"{strategy} esearch: {exc}")
+            strategy_summaries.append(
+                {
+                    "strategy": strategy,
+                    "search_term": search_term,
+                    "total_found": 0,
+                    "retrieved": 0,
+                }
+            )
 
-                existing = merged_records.get(accession)
-                if existing is None:
-                    merged_records[accession] = enriched
-                    continue
-
-                existing_priority = STRATEGY_PRIORITY.get(
-                    existing.get("_retrieval_strategy", ""), 99
-                )
-                new_priority = STRATEGY_PRIORITY.get(strategy, 99)
-                if new_priority < existing_priority:
-                    merged_records[accession] = enriched
-
-        records = list(merged_records.values())
-        if not records:
-            return {
-                "search_term": primary_search_term,
-                "search_strategies": strategy_summaries,
-                "total_found": max_total_found,
-                "records": [],
-                "source": "NCBI GEO",
-                "repository": GEO_REPOSITORY,
-                "message": "No GEO datasets matched the grounded search strategies",
-            }
-
-        return {
+    if not ordered_ids:
+        payload: dict[str, Any] = {
             "search_term": primary_search_term,
             "search_strategies": strategy_summaries,
             "total_found": max_total_found,
-            "records": records[:max_results],
+            "records": [],
             "source": "NCBI GEO",
             "repository": GEO_REPOSITORY,
+            "message": "No GEO datasets matched the grounded search strategies",
         }
+        if errors:
+            payload["error"] = "; ".join(errors)
+        return payload
 
+    try:
+        summary_records = _geo_esummary(ordered_ids[:max_results])
     except requests.exceptions.RequestException as exc:
-        return {
+        logger.warning("GEO esummary failed: %s", exc)
+        payload = {
             "search_term": primary_search_term,
             "search_strategies": strategy_summaries,
-            "total_found": 0,
+            "total_found": max_total_found,
             "records": [],
             "source": "NCBI GEO",
             "repository": GEO_REPOSITORY,
-            "error": f"Network error searching GEO: {exc}",
+            "error": f"GEO record fetch failed after search succeeded: {exc}",
         }
-    except Exception as exc:
-        return {
-            "search_term": primary_search_term,
-            "search_strategies": strategy_summaries,
-            "total_found": 0,
-            "records": [],
-            "source": "NCBI GEO",
-            "repository": GEO_REPOSITORY,
-            "error": f"Error searching GEO: {exc}",
-        }
+        if errors:
+            payload["error"] = f"{payload['error']}; {'; '.join(errors)}"
+        return payload
+
+    records: list[dict[str, Any]] = []
+    for record in summary_records:
+        uid = str(record.get("uid", ""))
+        strategy, search_term = id_to_provenance.get(uid, ("unknown", primary_search_term))
+        enriched = dict(record)
+        enriched["_retrieval_strategy"] = strategy
+        enriched["_retrieval_search_term"] = search_term
+        records.append(enriched)
+
+    payload = {
+        "search_term": primary_search_term,
+        "search_strategies": strategy_summaries,
+        "total_found": max_total_found,
+        "records": records[:max_results],
+        "source": "NCBI GEO",
+        "repository": GEO_REPOSITORY,
+    }
+    if errors:
+        payload["warning"] = "; ".join(errors)
+    return payload
 
 
 def search_geo_datasets(

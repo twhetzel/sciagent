@@ -47,11 +47,11 @@ class OntologyGrounder:
             except Exception:
                 continue
 
-            merged = merge_concept_candidates(collected)
+            merged = merge_concept_candidates(collected, slot=slot)
             if provider.name in {"ols", "bioportal"} and merged and merged[0].confidence >= STRONG_MATCH_CONFIDENCE:
                 break
 
-        ranked = merge_concept_candidates(collected)[:top_k]
+        ranked = merge_concept_candidates(collected, slot=slot)[:top_k]
         self._cache[cache_key] = ranked
         return ranked
 

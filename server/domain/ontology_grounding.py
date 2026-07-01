@@ -36,6 +36,13 @@ def search_terms_for_mapping(mapping: ConceptMapping) -> list[str]:
     """All terms to use when searching repositories for a grounded concept."""
     terms = {mapping.label.lower(), mapping.query_term.lower()}
     terms.update(s.lower() for s in mapping.synonyms)
+
+    from .ontology_providers.curated import SEED_CONCEPTS
+
+    seed = SEED_CONCEPTS.get(mapping.query_term) or SEED_CONCEPTS.get(mapping.query_term.lower())
+    if seed and seed.get("slot") == mapping.slot:
+        terms.update(s.lower() for s in seed.get("synonyms", []))
+
     return sorted(terms)
 
 
