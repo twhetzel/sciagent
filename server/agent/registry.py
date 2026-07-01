@@ -1,0 +1,194 @@
+"""
+Tool Registry - Tool registration and schema management
+"""
+
+import inspect
+from typing import Dict, Any, List, Callable
+from dataclasses import dataclass
+
+
+@dataclass
+class ToolSchema:
+    """Schema definition for a tool"""
+    name: str
+    description: str
+    parameters: Dict[str, Any]
+    function: Callable
+
+
+class ToolRegistry:
+    """Registry for managing available tools and their schemas"""
+    
+    def __init__(self):
+        self._tools: Dict[str, ToolSchema] = {}
+        self._register_builtin_tools()
+    
+    def register_tool(self, name: str, description: str, function: Callable, parameters: Dict[str, Any] = None):
+        """
+        Register a tool with the registry
+        
+        Args:
+            name: Tool name
+            description: Tool description
+            function: The function to call
+            parameters: Parameter schema (optional)
+        """
+        if parameters is None:
+            parameters = self._infer_parameters(function)
+            
+        schema = ToolSchema(
+            name=name,
+            description=description,
+            parameters=parameters,
+            function=function
+        )
+        
+        self._tools[name] = schema
+    
+    def get_tool(self, name: str) -> ToolSchema:
+        """Get a tool by name"""
+        return self._tools.get(name)
+    
+    def list_tools(self) -> List[Dict[str, str]]:
+        """List all registered tools"""
+        return [
+            {
+                "name": schema.name,
+                "description": schema.description,
+                "parameters": schema.parameters
+            }
+            for schema in self._tools.values()
+        ]
+    
+    def execute_tool(self, name: str, **kwargs) -> Any:
+        """Execute a tool with given parameters"""
+        tool = self.get_tool(name)
+        if not tool:
+            raise ValueError(f"Tool '{name}' not found")
+        
+        return tool.function(**kwargs)
+    
+    def _infer_parameters(self, function: Callable) -> Dict[str, Any]:
+        """Infer parameter schema from function signature"""
+        sig = inspect.signature(function)
+        parameters = {}
+        
+        for param_name, param in sig.parameters.items():
+            param_info = {
+                "type": param.annotation.__name__ if param.annotation != inspect.Parameter.empty else "str",
+                "required": param.default == inspect.Parameter.empty
+            }
+            
+            if param.default != inspect.Parameter.empty:
+                param_info["default"] = param.default
+                
+            parameters[param_name] = param_info
+        
+        return parameters
+    
+    def _register_builtin_tools(self):
+        """Register built-in tools"""
+        # Import tools dynamically to avoid circular imports
+        try:
+            from tools.pubmed import fetch_pubmed
+            self.register_tool(
+                name="pubmed",
+                description="Search PubMed for scientific articles",
+                function=fetch_pubmed,
+                parameters={
+                    "query": {"type": "str", "required": True, "description": "Search query"}
+                }
+            )
+        except ImportError:
+            pass
+        
+        try:
+            from tools.mygene import get_gene_summary
+            self.register_tool(
+                name="mygene",
+                description="Get gene information from MyGene.info",
+                function=get_gene_summary,
+                parameters={
+                    "symbol": {"type": "str", "required": True, "description": "Gene symbol"}
+                }
+            )
+        except ImportError:
+            pass
+        
+        try:
+            from tools.uniprot import get_uniprot
+            self.register_tool(
+                name="uniprot",
+                description="Get protein information from UniProt",
+                function=get_uniprot,
+                parameters={
+                    "identifier": {"type": "str", "required": True, "description": "UniProt accession or symbol"}
+                }
+            )
+        except ImportError:
+            pass
+        
+        try:
+            from tools.summarize import summarize_text
+            self.register_tool(
+                name="summarize",
+                description="Summarize text using LLM",
+                function=summarize_text,
+                parameters={
+                    "text": {"type": "str", "required": True, "description": "Text to summarize"}
+                }
+            )
+        except ImportError:
+            pass
+        
+        try:
+            from tools.alphafold import get_alphafold
+            self.register_tool(
+                name="alphafold",
+                description="Get AlphaFold protein structure information",
+                function=get_alphafold,
+                parameters={
+                    "uniprot_id": {"type": "str", "required": True, "description": "UniProt ID"}
+                }
+            )
+        except ImportError:
+            pass
+        
+        try:
+            from tools.clinvar import get_clinvar_variants
+            self.register_tool(
+                name="clinvar",
+                description="Get genetic variants and clinical significance from ClinVar",
+                function=get_clinvar_variants,
+                parameters={
+                    "gene_symbol": {"type": "str", "required": True, "description": "Gene symbol"}
+                }
+            )
+        except ImportError:
+            pass
+
+        try:
+            from tools.openalex import fetch_openalex
+            self.register_tool(
+                name="openalex",
+                description="Search OpenAlex for scholarly works",
+                function=fetch_openalex,
+                parameters={
+                    "query": {"type": "str", "required": True, "description": "Search query"}
+                }
+            )
+        except ImportError:
+            pass
+
+        try:
+            from tools.europepmc import fetch_europepmc
+            self.register_tool(
+                name="europepmc",
+                description="Search Europe PMC for scientific articles",
+                function=fetch_europepmc,
+                parameters={
+                    "query": {"type": "str", "required": True, "description": "Search query"}
+                }
+            )
+        except ImportError:
+            pass
