@@ -18,7 +18,7 @@ class AgentOrchestrator:
         self.prompts = SystemPrompts()
         self.max_iterations = 5
         
-    def run(self, query: str) -> tuple[str, List[Dict]]:
+    def run(self, query: str) -> tuple[str, List[Dict], Dict[str, Any] | None]:
         """
         Main entry point for the agent
         
@@ -26,8 +26,13 @@ class AgentOrchestrator:
             query: User's question or request
             
         Returns:
-            tuple: (final_response, execution_traces)
+            tuple: (final_response, execution_traces, optional dataset_search payload)
         """
+        from domain.query_interpretation import is_dataset_discovery_query
+
+        if is_dataset_discovery_query(query):
+            return self._run_dataset_discovery(query)
+
         self.tracer.start_trace("agent_run", {"query": query})
         
         try:
@@ -64,11 +69,68 @@ class AgentOrchestrator:
             final_response = self._final_synthesis(results, query)
             
             self.tracer.end_trace("agent_run", {"final_response": final_response})
-            return final_response, self.tracer.get_traces()
+            return final_response, self.tracer.get_traces(), None
             
         except Exception as e:
             self.tracer.log_error("agent_run", str(e))
-            return f"Error: {str(e)}", self.tracer.get_traces()
+            return f"Error: {str(e)}", self.tracer.get_traces(), None
+
+    def _run_dataset_discovery(self, query: str) -> tuple[str, List[Dict], Dict[str, Any]]:
+        """Run the ontology-grounded dataset discovery vertical."""
+        from agent.dataset_discovery import run_dataset_discovery
+
+        self.tracer.start_trace("agent_run", {"query": query, "mode": "dataset_discovery"})
+
+        try:
+            plan = {
+                "goal": query,
+                "tools_needed": ["geo_dataset_search"],
+                "mode": "dataset_discovery",
+            }
+            self.tracer.log_step("plan", {"plan": plan})
+
+            result = run_dataset_discovery(query)
+            result_payload = result.model_dump()
+
+            self.tracer.log_step(
+                "interpret",
+                {"interpreted_query": result_payload["interpreted_query"]},
+            )
+            self.tracer.log_step(
+                "ground",
+                {
+                    "concept_mappings": result_payload["concept_mappings"],
+                    "mapping_count": len(result_payload["concept_mappings"]),
+                },
+            )
+            self.tracer.log_step(
+                "tool_execution",
+                {
+                    "tool": "geo_dataset_search",
+                    "status": "success",
+                    "parameters": {"query": query},
+                    "data": {
+                        "total_found": result.total_found,
+                        "candidate_count": len(result.candidates),
+                        "source": result.source,
+                    },
+                },
+            )
+            self.tracer.log_step(
+                "rank",
+                {
+                    "candidate_count": len(result.candidates),
+                    "top_accessions": [c.accession for c in result.candidates[:5]],
+                },
+            )
+
+            final_response = self._format_dataset_search_response(result)
+            self.tracer.end_trace("agent_run", {"final_response": final_response})
+            return final_response, self.tracer.get_traces(), result_payload
+
+        except Exception as e:
+            self.tracer.log_error("agent_run", str(e))
+            return f"Error: {str(e)}", self.tracer.get_traces(), None
     
     def _plan(self, query: str) -> Dict[str, Any]:
         """Create an initial plan based on the query"""
@@ -558,3 +620,55 @@ class AgentOrchestrator:
         if isinstance(data, dict) and data.get("error"):
             return f"{index}. **{label}**: {data['error']}\n\n"
         return f"{index}. **{label}**: {data}\n\n"
+
+    def _format_dataset_search_response(self, result) -> str:
+        """Format ontology-grounded dataset discovery results for chat."""
+        interpreted = result.interpreted_query
+        slots = []
+        if interpreted.disease:
+            slots.append(f"disease={interpreted.disease}")
+        if interpreted.tissue:
+            slots.append(f"tissue={interpreted.tissue}")
+        if interpreted.assay:
+            slots.append(f"assay={interpreted.assay}")
+        if interpreted.organism:
+            slots.append(f"organism={interpreted.organism}")
+
+        response = f"Based on your query '{result.query}', I searched {result.source} using grounded ontology concepts.\n\n"
+        response += f"**Interpreted query**: {', '.join(slots) if slots else 'no structured slots extracted'}\n\n"
+
+        if result.concept_mappings:
+            response += "**Grounded concepts**:\n"
+            for mapping in result.concept_mappings:
+                response += f"- {mapping.slot}: {mapping.label} ({mapping.curie})\n"
+            response += "\n"
+
+        if not result.candidates:
+            response += f"No matching datasets were found ({result.total_found} raw GEO hits).\n"
+            return response
+
+        response += f"**Top ranked datasets** ({len(result.candidates)} shown, {result.total_found} total GEO hits):\n\n"
+        for index, candidate in enumerate(result.candidates[:5], 1):
+            response += f"{index}. **{candidate.accession}** — {candidate.title}\n"
+            response += f"   Repository: {candidate.repository}\n"
+            response += f"   Match: {candidate.match_status} (score {candidate.score:.2f})\n"
+            requested_assay = next(
+                (m.label for m in candidate.requested_concepts if m.slot == "assay"),
+                None,
+            )
+            if requested_assay:
+                response += f"   Requested assay: {requested_assay}\n"
+            if candidate.observed_assay:
+                response += f"   Observed assay: {candidate.observed_assay}\n"
+            if candidate.why_matched:
+                response += f"   Supported by evidence: {'; '.join(candidate.why_matched)}\n"
+            if candidate.why_partial:
+                response += f"   Partial/conflict notes: {'; '.join(candidate.why_partial)}\n"
+            if candidate.url:
+                response += f"   URL: {candidate.url}\n"
+            response += "\n"
+
+        if len(result.candidates) > 5:
+            response += f"... and {len(result.candidates) - 5} more ranked datasets (see structured results below).\n"
+
+        return response

@@ -55,7 +55,7 @@ export default function ChatPanel({ onSubmit, loading, messages }) {
             <ul>
               <li>BRCA1 gene information</li>
               <li>TP53 variants in ClinVar</li>
-              <li>breast cancer literature</li>
+              <li>Find public RNA-seq datasets for ulcerative colitis colon tissue</li>
               <li>AlphaFold structure for EGFR</li>
             </ul>
           </div>

@@ -11,6 +11,15 @@ export default defineConfig({
     fs: {
       allow: [path.resolve(__dirname, '..')],
     },
+    // Fallback for tools that still use same-origin /api in dev (e.g. curl).
+    proxy: {
+      '/api': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true,
+      },
+    },
+  },
+  preview: {
     proxy: {
       '/api': {
         target: 'http://127.0.0.1:8000',

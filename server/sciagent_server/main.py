@@ -46,6 +46,7 @@ class QueryRequest(BaseModel):
 class QueryResponse(BaseModel):
     response: str
     traces: list[dict[str, Any]]
+    dataset_search: dict[str, Any] | None = None
 
 
 @app.get("/api/health")
@@ -60,8 +61,12 @@ def list_tools() -> list[dict[str, Any]]:
 
 @app.post("/api/query", response_model=QueryResponse)
 def query(req: QueryRequest) -> QueryResponse:
-    response, traces = orchestrator.run(req.query)
-    return QueryResponse(response=response, traces=traces)
+    response, traces, dataset_search = orchestrator.run(req.query)
+    return QueryResponse(
+        response=response,
+        traces=traces,
+        dataset_search=dataset_search,
+    )
 
 
 def run() -> None:

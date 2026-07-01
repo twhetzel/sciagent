@@ -2,6 +2,7 @@ import { useCallback, useMemo, useState } from 'react'
 import { postQuery } from './api.js'
 import { toggleTheme } from './theme.js'
 import ChatPanel from './components/ChatPanel.jsx'
+import DatasetResultsPanel from './components/DatasetResultsPanel.jsx'
 import TracePanel from './components/TracePanel.jsx'
 import ToolsSidebar from './components/ToolsSidebar.jsx'
 import './App.css'
@@ -9,6 +10,7 @@ import './App.css'
 export default function App() {
   const [messages, setMessages] = useState([])
   const [traces, setTraces] = useState([])
+  const [datasetSearch, setDatasetSearch] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
 
@@ -30,12 +32,14 @@ export default function App() {
   const handleSubmit = useCallback(async (query) => {
     setLoading(true)
     setError(null)
+    setDatasetSearch(null)
     setMessages((prev) => [...prev, { role: 'user', content: query }])
 
     try {
       const result = await postQuery(query)
       setMessages((prev) => [...prev, { role: 'assistant', content: result.response }])
       setTraces(result.traces || [])
+      setDatasetSearch(result.dataset_search || null)
     } catch (err) {
       setError(err.message)
       setMessages((prev) => [
@@ -60,7 +64,10 @@ export default function App() {
 
       <main className="layout">
         <ToolsSidebar activeTools={activeTools} />
-        <ChatPanel messages={messages} loading={loading} onSubmit={handleSubmit} />
+        <div className="main-column">
+          <ChatPanel messages={messages} loading={loading} onSubmit={handleSubmit} />
+          <DatasetResultsPanel datasetSearch={datasetSearch} />
+        </div>
         <TracePanel traces={traces} />
       </main>
     </div>

@@ -20,6 +20,7 @@ function stepClass(name, data) {
   if (name === 'observe') return 'trace-step--observe'
   if (name === 'synthesize') return 'trace-step--synth'
   if (name === 'normalize') return 'trace-step--normalize'
+  if (name === 'interpret' || name === 'ground' || name === 'rank') return 'trace-step--plan'
   return 'trace-step--default'
 }
 
@@ -145,6 +146,34 @@ function summarizeStep(name, data, steps, stepIndex) {
           .map((m) => m.curie || m.label)
           .filter(Boolean),
       }
+    case 'interpret':
+      return {
+        title: 'Interpret',
+        summary: [
+          data?.interpreted_query?.disease && `disease: ${data.interpreted_query.disease}`,
+          data?.interpreted_query?.tissue && `tissue: ${data.interpreted_query.tissue}`,
+          data?.interpreted_query?.assay && `assay: ${data.interpreted_query.assay}`,
+          data?.interpreted_query?.organism && `organism: ${data.interpreted_query.organism}`,
+        ]
+          .filter(Boolean)
+          .join(', ') || 'Extracted query slots',
+        chips: [],
+      }
+    case 'ground':
+      return {
+        title: 'Ground',
+        summary: `${data?.mapping_count ?? 0} ontology concept(s) grounded`,
+        chips: (data?.concept_mappings || [])
+          .slice(0, 4)
+          .map((m) => m.curie || m.label)
+          .filter(Boolean),
+      }
+    case 'rank':
+      return {
+        title: 'Rank',
+        summary: `${data?.candidate_count ?? 0} candidate(s) scored`,
+        chips: data?.top_accessions || [],
+      }
     case 'error':
       return {
         title: 'Error',
@@ -160,6 +189,10 @@ function summarizeToolResult(data) {
   const payload = data?.data
   if (!payload || typeof payload !== 'object') return 'Completed'
 
+  if (data?.tool === 'geo_dataset_search') {
+    const count = payload.candidate_count ?? payload.total_found
+    return count != null ? `Found ${count} GEO dataset(s)` : 'GEO search completed'
+  }
   if (payload.results && Array.isArray(payload.results)) {
     return `Found ${payload.results.length} result(s)`
   }
