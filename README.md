@@ -65,7 +65,7 @@ These queries use a dedicated trace path and **do not** call `ontology_normalize
 | Step | Responsibility |
 |------|----------------|
 | **Interpret Query** | Extract disease, tissue, assay, organism facets from the query |
-| **Ground Query** | Map requested facets to ontology concepts (curated seed mappings) |
+| **Ground Query** | Map requested facets to ontology concepts using curated aliases/cache plus ontology lookup providers |
 | **Search Repository** | Search GEO using grounded labels and synonyms |
 | **Normalize Records** | Convert GEO API payloads into shared `DatasetCandidate` records |
 | **Annotate Evidence** | Identify metadata fields that support facet matches; collect evidence snippets |
@@ -87,7 +87,7 @@ These queries use a dedicated trace path and **do not** call `ontology_normalize
 
 After gene/literature/ClinVar tools run, the agent maps free-text terms from **tool results** to formal ontology IDs (MONDO, HP, GO, NCBITaxon, CHEBI, UBERON) using a three-tier lookup in `tools/ontology_normalizer.py`: **OLS** → **BioPortal** (`BIOPORTAL_API_KEY`) → **Claude synonym expansion** (`ANTHROPIC_API_KEY`). Results appear on each tool payload as `normalized_terms` and in a **`normalize`** trace step labeled **Normalize (tool results)**.
 
-This is separate from dataset discovery, where **Ground Query** handles ontology mapping of the user request and **Normalize Records** handles GEO payload shaping.
+This is separate from dataset discovery, where **Ground Query** maps requested facets via curated aliases/cache and ontology lookup providers (OLS, BioPortal, LLM disambiguation) and **Normalize Records** handles GEO payload shaping.
 
 | Question | What normalization demonstrates | Optional env vars |
 |----------|--------------------------------|-------------------|
@@ -198,7 +198,7 @@ Each trace document includes:
 | Step | Description |
 |------|-------------|
 | `interpret_query` | *(dataset discovery)* **Interpret Query** — extracted disease, tissue, assay, organism |
-| `ground_query` | *(dataset discovery)* **Ground Query** — ontology mapping of requested facets |
+| `ground_query` | *(dataset discovery)* **Ground Query** — curated aliases/cache plus ontology lookup providers |
 | `search_repository` | *(dataset discovery)* **Search Repository** — GEO search using grounded synonyms |
 | `normalize_records` | *(dataset discovery)* **Normalize Records** — GEO payloads → `DatasetCandidate` |
 | `annotate_evidence` | *(dataset discovery)* **Annotate Evidence** — field-level concept/evidence matching |
