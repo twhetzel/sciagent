@@ -188,6 +188,14 @@
 
 .chat-empty ul {
   padding-left: 1.25rem;
+  margin: 0.35rem 0 0.75rem;
+}
+
+.chat-empty-section {
+  margin: 0.75rem 0 0;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-secondary);
 }
 
 .message {
@@ -373,6 +381,25 @@
 .dataset-partial {
   margin-top: 0.5rem;
   font-size: 0.82rem;
+  color: var(--accent-warning);
+}
+
+.dataset-warnings {
+  margin-top: 0.5rem;
+  padding: 0.65rem 0.75rem;
+  border-radius: var(--radius-md);
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.25);
+  font-size: 0.82rem;
+  color: var(--text-primary);
+}
+
+.dataset-warnings ul {
+  margin: 0.25rem 0 0;
+  padding-left: 1.1rem;
+}
+
+.dataset-warnings li {
   color: var(--accent-warning);
 }
 

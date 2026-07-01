@@ -1,32 +1,76 @@
-"""End-to-end ontology-grounded dataset discovery pipeline."""
+"""
+Ontology-grounded GEO dataset discovery pipeline.
+
+Pipeline steps (dataset-discovery path only):
+  1. Interpret Query      — extract disease, tissue, assay, organism facets
+  2. Ground Query         — map requested facets to ontology concepts (curated seeds)
+  3. Search Repository    — query GEO with grounded labels/synonyms
+  4. Normalize Records    — convert GEO API payloads into shared DatasetCandidate models
+  5. Annotate Evidence    — field-level concept/evidence matching on returned records
+  6. Rank Results         — score by evidence coverage
+  7. Respond              — formatted response + structured dataset_search payload
+
+This path does NOT use tools/ontology_normalizer.py. That module powers the generic
+gene/literature/ClinVar "normalize" trace step, which is a different concern.
+"""
 
 from __future__ import annotations
 
-from domain.dataset_search import DatasetSearchResult
+from domain.dataset_annotation import annotate_dataset_candidates
+from domain.dataset_search import DatasetSearchResult, InterpretedQuery
 from domain.ontology_grounding import ground_interpreted_query
 from domain.query_interpretation import interpret_dataset_query
-from domain.ranking import rank_dataset_candidates
-from tools.geo_dataset_search import search_geo_datasets
+from domain.ranking import rank_annotated_candidates
+from tools.geo_dataset_search import (
+    fetch_geo_repository_records,
+    normalize_geo_records,
+)
+
+
+def interpret_query(query: str) -> InterpretedQuery:
+    """Step 1: extract structured facets from the user query."""
+    return interpret_dataset_query(query)
+
+
+def ground_query(interpreted: InterpretedQuery):
+    """Step 2: ontology grounding of requested facets (curated seed mappings)."""
+    return ground_interpreted_query(interpreted)
+
+
+def search_repository(concept_mappings, max_results: int = 15) -> dict:
+    """Step 3: search GEO using grounded labels and synonyms."""
+    return fetch_geo_repository_records(concept_mappings, max_results=max_results)
+
+
+def normalize_records(raw_records: list[dict]) -> list:
+    """Step 4: repository record normalization into shared DatasetCandidate models."""
+    return normalize_geo_records(raw_records)
+
+
+def annotate_evidence(candidates, concept_mappings):
+    """Step 5: annotate returned records with evidence snippets and warnings."""
+    return annotate_dataset_candidates(candidates, concept_mappings)
+
+
+def rank_results(candidates, concept_mappings):
+    """Step 6: rank annotated candidates by evidence coverage."""
+    return rank_annotated_candidates(candidates, concept_mappings)
 
 
 def run_dataset_discovery(query: str, max_results: int = 15) -> DatasetSearchResult:
-    """Interpret, ground, search GEO, rank, and return normalized dataset results."""
-    interpreted = interpret_dataset_query(query)
-    concept_mappings = ground_interpreted_query(interpreted)
-
-    geo_result = search_geo_datasets(concept_mappings, max_results=max_results)
-    raw_candidates = geo_result.get("candidates", [])
-    ranked = rank_dataset_candidates(
-        raw_candidates,
-        concept_mappings,
-        requested_assay=interpreted.assay,
-    )
+    """Run the full dataset-discovery pipeline."""
+    interpreted = interpret_query(query)
+    concept_mappings = ground_query(interpreted)
+    search_result = search_repository(concept_mappings, max_results=max_results)
+    candidates = normalize_records(search_result.get("records", []))
+    annotated = annotate_evidence(candidates, concept_mappings)
+    ranked = rank_results(annotated, concept_mappings)
 
     return DatasetSearchResult(
         query=query,
         interpreted_query=interpreted,
         concept_mappings=concept_mappings,
         candidates=ranked,
-        total_found=geo_result.get("total_found", len(ranked)),
-        source=geo_result.get("source", "NCBI GEO"),
+        total_found=search_result.get("total_found", len(ranked)),
+        source=search_result.get("source", "NCBI GEO"),
     )

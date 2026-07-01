@@ -76,55 +76,108 @@ class AgentOrchestrator:
             return f"Error: {str(e)}", self.tracer.get_traces(), None
 
     def _run_dataset_discovery(self, query: str) -> tuple[str, List[Dict], Dict[str, Any]]:
-        """Run the ontology-grounded dataset discovery vertical."""
-        from agent.dataset_discovery import run_dataset_discovery
+        """Run the ontology-grounded dataset discovery vertical with explicit trace steps."""
+        from agent import dataset_discovery as pipeline
 
         self.tracer.start_trace("agent_run", {"query": query, "mode": "dataset_discovery"})
 
         try:
-            plan = {
-                "goal": query,
-                "tools_needed": ["geo_dataset_search"],
-                "mode": "dataset_discovery",
-            }
-            self.tracer.log_step("plan", {"plan": plan})
+            interpreted = pipeline.interpret_query(query)
+            self.tracer.log_step(
+                "interpret_query",
+                {
+                    "label": "Interpret Query",
+                    "description": "Extract disease, tissue, assay, and organism facets from the query",
+                    "interpreted_query": interpreted.model_dump(),
+                },
+            )
 
-            result = run_dataset_discovery(query)
+            concept_mappings = pipeline.ground_query(interpreted)
+            self.tracer.log_step(
+                "ground_query",
+                {
+                    "label": "Ground Query",
+                    "description": "Map requested facets to ontology concepts using curated seed mappings",
+                    "concept_mappings": [m.model_dump() for m in concept_mappings],
+                    "mapping_count": len(concept_mappings),
+                },
+            )
+
+            search_result = pipeline.search_repository(concept_mappings)
+            self.tracer.log_step(
+                "search_repository",
+                {
+                    "label": "Search Repository",
+                    "description": "Search GEO using grounded labels and synonyms",
+                    "repository": search_result.get("repository", "GEO"),
+                    "search_term": search_result.get("search_term", ""),
+                    "total_found": search_result.get("total_found", 0),
+                    "record_count": len(search_result.get("records", [])),
+                    "source": search_result.get("source", "NCBI GEO"),
+                    "error": search_result.get("error"),
+                },
+            )
+
+            candidates = pipeline.normalize_records(search_result.get("records", []))
+            self.tracer.log_step(
+                "normalize_records",
+                {
+                    "label": "Normalize Records",
+                    "description": "Convert GEO-specific API responses into shared DatasetCandidate records",
+                    "repository": search_result.get("repository", "GEO"),
+                    "input_records": len(search_result.get("records", [])),
+                    "candidate_count": len(candidates),
+                },
+            )
+
+            annotated = pipeline.annotate_evidence(candidates, concept_mappings)
+            evidence_snippet_count = sum(len(c.evidence_snippets) for c in annotated)
+            self.tracer.log_step(
+                "annotate_evidence",
+                {
+                    "label": "Annotate Evidence",
+                    "description": "Identify metadata fields that support facet matches and collect evidence snippets",
+                    "candidate_count": len(annotated),
+                    "evidence_snippet_count": evidence_snippet_count,
+                    "warning_count": sum(len(c.metadata_warnings) for c in annotated),
+                },
+            )
+
+            ranked = pipeline.rank_results(annotated, concept_mappings)
+            self.tracer.log_step(
+                "rank_results",
+                {
+                    "label": "Rank Results",
+                    "description": "Score candidates by evidence coverage; do not inherit requested facets without evidence",
+                    "candidate_count": len(ranked),
+                    "full_matches": sum(1 for c in ranked if c.match_status == "full"),
+                    "partial_matches": sum(1 for c in ranked if c.match_status == "partial"),
+                    "top_accessions": [c.accession for c in ranked[:5]],
+                },
+            )
+
+            from domain.dataset_search import DatasetSearchResult
+
+            result = DatasetSearchResult(
+                query=query,
+                interpreted_query=interpreted,
+                concept_mappings=concept_mappings,
+                candidates=ranked,
+                total_found=search_result.get("total_found", len(ranked)),
+                source=search_result.get("source", "NCBI GEO"),
+            )
             result_payload = result.model_dump()
-
-            self.tracer.log_step(
-                "interpret",
-                {"interpreted_query": result_payload["interpreted_query"]},
-            )
-            self.tracer.log_step(
-                "ground",
-                {
-                    "concept_mappings": result_payload["concept_mappings"],
-                    "mapping_count": len(result_payload["concept_mappings"]),
-                },
-            )
-            self.tracer.log_step(
-                "tool_execution",
-                {
-                    "tool": "geo_dataset_search",
-                    "status": "success",
-                    "parameters": {"query": query},
-                    "data": {
-                        "total_found": result.total_found,
-                        "candidate_count": len(result.candidates),
-                        "source": result.source,
-                    },
-                },
-            )
-            self.tracer.log_step(
-                "rank",
-                {
-                    "candidate_count": len(result.candidates),
-                    "top_accessions": [c.accession for c in result.candidates[:5]],
-                },
-            )
-
             final_response = self._format_dataset_search_response(result)
+
+            self.tracer.log_step(
+                "respond",
+                {
+                    "label": "Respond",
+                    "description": "Render ranked dataset results, warnings, and structured dataset_search payload",
+                    "candidate_count": len(ranked),
+                    "response_preview": final_response[:240],
+                },
+            )
             self.tracer.end_trace("agent_run", {"final_response": final_response})
             return final_response, self.tracer.get_traces(), result_payload
 
@@ -663,7 +716,9 @@ class AgentOrchestrator:
             if candidate.why_matched:
                 response += f"   Supported by evidence: {'; '.join(candidate.why_matched)}\n"
             if candidate.why_partial:
-                response += f"   Partial/conflict notes: {'; '.join(candidate.why_partial)}\n"
+                response += f"   Why partial: {'; '.join(candidate.why_partial)}\n"
+            if candidate.metadata_warnings:
+                response += f"   Metadata warnings: {'; '.join(candidate.metadata_warnings)}\n"
             if candidate.url:
                 response += f"   URL: {candidate.url}\n"
             response += "\n"

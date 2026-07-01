@@ -33,12 +33,27 @@ function EvidenceList({ evidence }) {
   )
 }
 
+function WarningList({ warnings, title }) {
+  if (!warnings?.length) return null
+  return (
+    <div className="dataset-warnings">
+      <strong>{title}</strong>
+      <ul>
+        {warnings.map((warning) => (
+          <li key={warning}>{warning}</li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
 function requestedAssay(candidate) {
   return candidate.requested_concepts?.find((mapping) => mapping.slot === 'assay')?.label
 }
 
 function DatasetCard({ candidate, rank }) {
   const requestedAssayLabel = requestedAssay(candidate)
+  const assayMatched = candidate.matched_concepts?.some((mapping) => mapping.slot === 'assay')
 
   return (
     <article className={`dataset-card dataset-card--${candidate.match_status || 'partial'}`}>
@@ -67,9 +82,10 @@ function DatasetCard({ candidate, rank }) {
 
       <div className="dataset-meta">
         {requestedAssayLabel && <span>Requested: {requestedAssayLabel}</span>}
-        <span>
-          Observed assay: {candidate.observed_assay || 'unknown'}
-        </span>
+        <span>Observed assay: {candidate.observed_assay || 'unknown'}</span>
+        {assayMatched && requestedAssayLabel && (
+          <span>Assay evidence: {requestedAssayLabel} supported in metadata</span>
+        )}
         {candidate.observed_organism && (
           <span>Observed organism: {candidate.observed_organism}</span>
         )}
@@ -83,6 +99,8 @@ function DatasetCard({ candidate, rank }) {
           <span>Samples: {candidate.sample_count}</span>
         )}
       </div>
+
+      <WarningList warnings={candidate.metadata_warnings} title="Metadata warnings" />
 
       {candidate.requested_concepts?.length > 0 && (
         <div className="dataset-requested">
@@ -125,15 +143,12 @@ function DatasetCard({ candidate, rank }) {
         </div>
       )}
 
-      {(candidate.why_partial?.length > 0 || candidate.conflicting_assays?.length > 0) && (
+      {candidate.why_partial?.length > 0 && (
         <div className="dataset-partial">
-          <strong>Why partial or conflicting</strong>
+          <strong>Why partial</strong>
           <ul>
-            {candidate.why_partial?.map((reason) => (
+            {candidate.why_partial.map((reason) => (
               <li key={reason}>{reason}</li>
-            ))}
-            {candidate.conflicting_assays?.map((assay) => (
-              <li key={assay}>Conflicting assay detected in metadata: {assay}</li>
             ))}
           </ul>
         </div>

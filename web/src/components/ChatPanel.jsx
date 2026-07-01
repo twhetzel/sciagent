@@ -51,11 +51,16 @@ export default function ChatPanel({ onSubmit, loading, messages }) {
       <div className="chat-messages">
         {messages.length === 0 && (
           <div className="chat-empty">
-            <p>Ask about genes, proteins, variants, structures, or literature.</p>
+            <p>Try an example below. The trace panel shows different steps depending on query type.</p>
+            <p className="chat-empty-section">Dataset discovery (Interpret Query → Ground Query → Search → Normalize Records → Annotate → Rank → Respond)</p>
+            <ul>
+              <li>Find public RNA-seq datasets for ulcerative colitis colon tissue</li>
+            </ul>
+            <p className="chat-empty-section">Gene / variant search (includes Normalize tool results)</p>
             <ul>
               <li>BRCA1 gene information</li>
               <li>TP53 variants in ClinVar</li>
-              <li>Find public RNA-seq datasets for ulcerative colitis colon tissue</li>
+              <li>marfan syndrome variants</li>
               <li>AlphaFold structure for EGFR</li>
             </ul>
           </div>

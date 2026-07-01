@@ -1,4 +1,9 @@
-"""Curated seed mappings for ontology-grounded dataset search."""
+"""Curated seed mappings for ontology-grounded dataset search.
+
+Used by the dataset-discovery **Ground Query** step. This is query-side ontology
+grounding and is separate from tools/ontology_normalizer.py (tool-result normalization
+on the generic gene/literature/ClinVar path).
+"""
 
 from __future__ import annotations
 

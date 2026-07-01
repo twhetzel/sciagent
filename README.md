@@ -28,10 +28,11 @@ The FastAPI layer is intentionally thin: it only calls `orchestrator.run(prompt)
 | `uniprot` | UniProt REST | None |
 | `clinvar` | NCBI E-utilities (ClinVar) | Same NCBI env vars as PubMed |
 | `alphafold` | AlphaFold EBI API | None |
+| `geo_dataset_search` | NCBI GEO (GDS) | Same NCBI env vars as PubMed |
 | `summarize` | OpenAI / Anthropic | `OPENAI_API_KEY` and/or `ANTHROPIC_API_KEY` |
 | *(post-processing)* | OLS / BioPortal / Claude | Optional `BIOPORTAL_API_KEY`, `ANTHROPIC_API_KEY` for ontology normalization |
 
-The orchestrator uses keyword heuristics (not LLM tool-calling) to select tools. After tools finish, ontology normalization runs automatically. See [Example queries](#example-queries) below.
+The orchestrator uses keyword heuristics (not LLM tool-calling) to select tools. On the standard agent path, `tools/ontology_normalizer.py` runs after tools finish and appears in the trace as **Normalize (tool results)**. Dataset discovery queries use a separate seven-step pipeline documented below.
 
 ## Example queries
 
@@ -57,6 +58,24 @@ SciAgent Studio routes queries based on keywords and simple entity extraction (g
 | `EGFR 3D structure` | MyGene, UniProt, AlphaFold | `3D` triggers AlphaFold alongside gene tools |
 | `Summarize TP53 gene function` | MyGene, UniProt, summarize | Summarize step aggregates gene/protein text |
 
+### Dataset discovery (GEO)
+
+These queries use a dedicated trace path and **do not** call `ontology_normalizer.py`. Do not confuse **Normalize Records** (repository payload → `DatasetCandidate`) with **Normalize (tool results)** on the gene/literature/ClinVar path.
+
+| Step | Responsibility |
+|------|----------------|
+| **Interpret Query** | Extract disease, tissue, assay, organism facets from the query |
+| **Ground Query** | Map requested facets to ontology concepts (curated seed mappings) |
+| **Search Repository** | Search GEO using grounded labels and synonyms |
+| **Normalize Records** | Convert GEO API payloads into shared `DatasetCandidate` records |
+| **Annotate Evidence** | Identify metadata fields that support facet matches; collect evidence snippets |
+| **Rank Results** | Score candidates by evidence coverage (requested facets are not inherited without evidence) |
+| **Respond** | Render chat response, structured `dataset_search` payload, and warnings |
+
+| Question | What you should see |
+|----------|---------------------|
+| `Find public RNA-seq datasets for ulcerative colitis colon tissue` | Ranked GEO datasets in the middle panel; trace steps above; requested vs observed assay, evidence snippets, metadata warnings |
+
 **Tips for reliable routing:**
 
 - Use standard gene symbols (`BRCA1`, not `brca1`).
@@ -64,11 +83,11 @@ SciAgent Studio routes queries based on keywords and simple entity extraction (g
 - For ClinVar **by condition**, include a disease term (`syndrome`, `disease`, `disorder`, `condition`)—not just a colloquial name.
 - Multi-tool queries can take 10–30 seconds; watch the trace panel for progress.
 
-### Ontology normalization
+### Ontology normalization (standard agent path)
 
-After tools run, the agent maps free-text terms from tool results to formal ontology IDs (MONDO, HP, GO, NCBITaxon, CHEBI, UBERON) using a three-tier lookup: **OLS** → **BioPortal** (`BIOPORTAL_API_KEY`) → **Claude synonym expansion** (`ANTHROPIC_API_KEY`). Results appear on each tool payload as `normalized_terms` and in a **`normalize`** trace step.
+After gene/literature/ClinVar tools run, the agent maps free-text terms from **tool results** to formal ontology IDs (MONDO, HP, GO, NCBITaxon, CHEBI, UBERON) using a three-tier lookup in `tools/ontology_normalizer.py`: **OLS** → **BioPortal** (`BIOPORTAL_API_KEY`) → **Claude synonym expansion** (`ANTHROPIC_API_KEY`). Results appear on each tool payload as `normalized_terms` and in a **`normalize`** trace step labeled **Normalize (tool results)**.
 
-Look for the **Normalize** step in the trace panel (matched/unmatched counts and CURIE chips). Expand it to see each mapping: source tool, tier, `match_type`, and resolved label.
+This is separate from dataset discovery, where **Ground Query** handles ontology mapping of the user request and **Normalize Records** handles GEO payload shaping.
 
 | Question | What normalization demonstrates | Optional env vars |
 |----------|--------------------------------|-------------------|
@@ -178,12 +197,19 @@ Each trace document includes:
 
 | Step | Description |
 |------|-------------|
+| `interpret_query` | *(dataset discovery)* **Interpret Query** — extracted disease, tissue, assay, organism |
+| `ground_query` | *(dataset discovery)* **Ground Query** — ontology mapping of requested facets |
+| `search_repository` | *(dataset discovery)* **Search Repository** — GEO search using grounded synonyms |
+| `normalize_records` | *(dataset discovery)* **Normalize Records** — GEO payloads → `DatasetCandidate` |
+| `annotate_evidence` | *(dataset discovery)* **Annotate Evidence** — field-level concept/evidence matching |
+| `rank_results` | *(dataset discovery)* **Rank Results** — evidence-based scoring |
+| `respond` | *(dataset discovery)* **Respond** — rendered answer and structured results |
 | `plan` | Goal and `tools_needed` |
 | `iteration` | Loop counter |
 | `tool_execution` | Tool name, status, parameters, result |
 | `observe` | Success/failure counts |
 | `synthesize` | Updated plan |
-| `normalize` | Ontology mappings (tier, CURIE, match type) per extracted term |
+| `normalize` | *(standard agent path)* **Normalize (tool results)** — OLS / BioPortal / Claude on tool outputs |
 | `error` | Failure details (if any) |
 
 The React trace panel renders these as a color-coded timeline instead of raw JSON.

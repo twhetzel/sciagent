@@ -65,11 +65,12 @@ class DatasetCandidate(BaseModel):
     score: float = 0.0
     match_status: str = Field(
         default="partial",
-        description="full, partial, or conflict",
+        description="full or partial based on evidence coverage",
     )
     why_matched: list[str] = Field(default_factory=list)
     why_partial: list[str] = Field(default_factory=list)
-    conflicting_assays: list[str] = Field(default_factory=list)
+    metadata_warnings: list[str] = Field(default_factory=list)
+    evidence_conflicts: list[str] = Field(default_factory=list)
 
 
 class DatasetSearchResult(BaseModel):

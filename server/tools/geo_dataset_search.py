@@ -50,7 +50,8 @@ def _sample_titles(record: dict[str, Any]) -> list[str]:
     return titles
 
 
-def _normalize_geo_record(record: dict[str, Any]) -> DatasetCandidate | None:
+def normalize_geo_record(record: dict[str, Any]) -> DatasetCandidate | None:
+    """Convert one GEO esummary record into a shared DatasetCandidate."""
     accession = (
         record.get("accession")
         or record.get("Accession")
@@ -74,7 +75,7 @@ def _normalize_geo_record(record: dict[str, Any]) -> DatasetCandidate | None:
         description=description,
         taxon=record.get("taxon") or record.get("Taxon") or record.get("organism"),
         gdstype=record.get("gdstype") or record.get("GDSType"),
-        platformtitle=record.get("platformtitle") or record.get("platformtitle"),
+        platformtitle=record.get("platformtitle"),
         platformtaxa=record.get("platformtaxa") or record.get("samplestaxa"),
         ptechtype=record.get("ptechtype"),
         sample_titles=_sample_titles(record),
@@ -91,22 +92,33 @@ def _normalize_geo_record(record: dict[str, Any]) -> DatasetCandidate | None:
     )
 
 
-def search_geo_datasets(
+def normalize_geo_records(records: list[dict[str, Any]]) -> list[DatasetCandidate]:
+    """Normalize Records: map GEO-specific payloads to shared DatasetCandidate models."""
+    candidates: list[DatasetCandidate] = []
+    for record in records:
+        candidate = normalize_geo_record(record)
+        if candidate:
+            candidates.append(candidate)
+    return candidates
+
+
+def fetch_geo_repository_records(
     concept_mappings: list[ConceptMapping],
     max_results: int = 15,
 ) -> dict[str, Any]:
     """
-    Search NCBI GEO DataSets using grounded concept synonyms.
+    Search Repository: query GEO and return raw esummary records.
 
-    Returns normalized DatasetCandidate records without GEO-specific fields
-    leaking beyond this module.
+    Record normalization into DatasetCandidate happens in normalize_geo_records().
     """
     search_term = build_geo_search_term(concept_mappings)
     if not search_term:
         return {
             "search_term": "",
             "total_found": 0,
-            "candidates": [],
+            "records": [],
+            "source": "NCBI GEO",
+            "repository": GEO_REPOSITORY,
             "error": "No grounded concepts available for GEO search",
         }
 
@@ -131,7 +143,9 @@ def search_geo_datasets(
             return {
                 "search_term": search_term,
                 "total_found": total_found,
-                "candidates": [],
+                "records": [],
+                "source": "NCBI GEO",
+                "repository": GEO_REPOSITORY,
                 "message": "No GEO datasets matched the grounded search",
             }
 
@@ -149,33 +163,48 @@ def search_geo_datasets(
         summary_data = summary_response.json()
         result_block = summary_data.get("result", {})
 
-        candidates: list[DatasetCandidate] = []
+        records: list[dict[str, Any]] = []
         for uid in id_list:
             record = result_block.get(uid, {})
-            if not isinstance(record, dict):
-                continue
-            candidate = _normalize_geo_record(record)
-            if candidate:
-                candidates.append(candidate)
+            if isinstance(record, dict):
+                records.append(record)
 
         return {
             "search_term": search_term,
             "total_found": total_found,
-            "candidates": candidates,
+            "records": records,
             "source": "NCBI GEO",
+            "repository": GEO_REPOSITORY,
         }
 
     except requests.exceptions.RequestException as exc:
         return {
             "search_term": search_term,
             "total_found": 0,
-            "candidates": [],
+            "records": [],
+            "source": "NCBI GEO",
+            "repository": GEO_REPOSITORY,
             "error": f"Network error searching GEO: {exc}",
         }
     except Exception as exc:
         return {
             "search_term": search_term,
             "total_found": 0,
-            "candidates": [],
+            "records": [],
+            "source": "NCBI GEO",
+            "repository": GEO_REPOSITORY,
             "error": f"Error searching GEO: {exc}",
         }
+
+
+def search_geo_datasets(
+    concept_mappings: list[ConceptMapping],
+    max_results: int = 15,
+) -> dict[str, Any]:
+    """Tool entry point: search GEO and return normalized DatasetCandidate records."""
+    search_result = fetch_geo_repository_records(concept_mappings, max_results=max_results)
+    candidates = normalize_geo_records(search_result.get("records", []))
+    return {
+        **search_result,
+        "candidates": candidates,
+    }
