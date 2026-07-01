@@ -36,15 +36,20 @@ GDS_TYPE_ASSAY_HINTS: list[tuple[str, str]] = [
 STRUCTURED_ASSAY_FIELDS = ("gdstype", "summary", "platformtitle", "ptechtype")
 MIXED_ASSAY_LABEL = "mixed or multi-assay"
 
+MOUSE_ORGANISM_LABEL = "Mus musculus"
+HUMAN_ORGANISM_LABEL = "Homo sapiens"
+STRUCTURED_ORGANISM_FIELDS = ("taxon", "platformtaxa", "sample_titles")
+NARRATIVE_ORGANISM_FIELDS = ("title", "summary")
+
 SLOT_FIELD_PRIORITY = (
-    "title",
-    "summary",
+    "taxon",
+    "platformtaxa",
+    "sample_titles",
     "gdstype",
     "platformtitle",
-    "platformtaxa",
     "ptechtype",
-    "taxon",
-    "sample_titles",
+    "title",
+    "summary",
 )
 
 
@@ -263,7 +268,8 @@ def _slot_supported_by_evidence(slot: str, mapping: ConceptMapping, fields: dict
         return bool(_assay_evidence_fields(fields, mapping))
 
     if slot == "organism":
-        return detect_observed_organism(fields, mapping) is not None
+        supported, _, _ = organism_supported_by_evidence(fields, mapping)
+        return supported
 
     if slot == "disease":
         return detect_observed_disease(fields, mapping) is not None
@@ -280,20 +286,118 @@ def _slot_supported_by_evidence(slot: str, mapping: ConceptMapping, fields: dict
     )
 
 
-def detect_observed_organism(fields: dict[str, str], mapping: ConceptMapping | None = None) -> str | None:
-    taxon = fields.get("taxon", "")
-    if taxon:
-        if not mapping:
-            return taxon
-        if any(_term_in_text(term, taxon) for term in search_terms_for_mapping(mapping)):
-            return taxon
+def _is_mouse_text(text: str) -> bool:
+    normalized = _normalize_text(text)
+    return (
+        "mus musculus" in normalized
+        or re.search(r"\bmouse\b|\bmice\b|\bmurine\b", normalized) is not None
+    )
 
-    for field in ("title", "summary", "platformtaxa", "sample_titles"):
+
+def _is_human_text(text: str) -> bool:
+    normalized = _normalize_text(text)
+    return "homo sapiens" in normalized or re.search(r"\bhuman\b", normalized) is not None
+
+
+def detect_structured_organism(fields: dict[str, str]) -> str | None:
+    """Return organism from structured taxon/sample metadata only."""
+    for field in STRUCTURED_ORGANISM_FIELDS:
         text = fields.get(field, "")
-        if not text or not mapping:
+        if not text:
             continue
-        if any(_term_in_text(term, text) for term in search_terms_for_mapping(mapping)):
-            return mapping.label
+        if _is_mouse_text(text):
+            return MOUSE_ORGANISM_LABEL
+        if _is_human_text(text):
+            return HUMAN_ORGANISM_LABEL
+        return text.strip()
+    return None
+
+
+def detect_narrative_organism(fields: dict[str, str]) -> str | None:
+    """Return organism hints from title/summary when structured taxon is absent."""
+    for field in NARRATIVE_ORGANISM_FIELDS:
+        text = fields.get(field, "")
+        if not text:
+            continue
+        if _is_mouse_text(text):
+            return MOUSE_ORGANISM_LABEL
+        if _is_human_text(text):
+            return HUMAN_ORGANISM_LABEL
+    return None
+
+
+def _organism_matches_mapping(observed: str, mapping: ConceptMapping) -> bool:
+    if mapping.slot != "organism":
+        return False
+    return any(_term_in_text(term, observed) for term in search_terms_for_mapping(mapping))
+
+
+def organism_supported_by_evidence(
+    fields: dict[str, str],
+    mapping: ConceptMapping,
+) -> tuple[bool, str | None, str | None]:
+    """
+    Determine whether organism evidence supports the requested concept.
+
+    Returns (supported, observed_label, evidence_field).
+    """
+    structured = detect_structured_organism(fields)
+    if structured:
+        if _organism_matches_mapping(structured, mapping):
+            field = next(
+                (name for name in STRUCTURED_ORGANISM_FIELDS if fields.get(name)),
+                "taxon",
+            )
+            return True, structured, field
+        return False, structured, None
+
+    narrative = detect_narrative_organism(fields)
+    if narrative and _organism_matches_mapping(narrative, mapping):
+        field = next(
+            (name for name in NARRATIVE_ORGANISM_FIELDS if fields.get(name)),
+            "title",
+        )
+        return True, narrative, field
+
+    return False, narrative or structured, None
+
+
+def detect_mouse_model_of_human_disease(
+    fields: dict[str, str],
+    disease_mapping: ConceptMapping | None,
+) -> tuple[bool, str]:
+    """Detect mouse model studies where human disease language appears in metadata."""
+    structured = detect_structured_organism(fields)
+    if not structured or not _is_mouse_text(structured):
+        return False, ""
+
+    if disease_mapping and detect_observed_disease(fields, disease_mapping):
+        return True, (
+            "Mouse model study (Mus musculus); human disease terms appear in metadata "
+            "but organism is not Homo sapiens."
+        )
+
+    for field in NARRATIVE_ORGANISM_FIELDS:
+        text = fields.get(field, "")
+        if text and _is_human_text(text):
+            return True, (
+                "Metadata mentions human disease context, but structured organism metadata "
+                "indicates Mus musculus (likely an animal model study)."
+            )
+
+    return False, ""
+
+
+def detect_observed_organism(fields: dict[str, str], mapping: ConceptMapping | None = None) -> str | None:
+    structured = detect_structured_organism(fields)
+    if structured:
+        return structured
+
+    narrative = detect_narrative_organism(fields)
+    if narrative:
+        return narrative
+
+    del mapping
     return None
 
 
@@ -336,6 +440,20 @@ def extract_evidence_for_mapping(
             )
         return bool(snippets), snippets
 
+    if mapping.slot == "organism":
+        supported, observed, evidence_field = organism_supported_by_evidence(fields, mapping)
+        if supported and evidence_field:
+            text = fields.get(evidence_field, "")
+            excerpt = text if len(text) <= 240 else text[:237] + "..."
+            snippets.append(
+                EvidenceSnippet(
+                    field=evidence_field,
+                    text=excerpt,
+                    matched_concepts=[observed or mapping.label],
+                )
+            )
+        return supported, snippets
+
     search_terms = search_terms_for_mapping(mapping)
     for field in SLOT_FIELD_PRIORITY:
         text = fields.get(field, "")
@@ -347,13 +465,6 @@ def extract_evidence_for_mapping(
             for term in search_terms
             if _term_in_text(term, text)
         ]
-
-        if mapping.slot == "organism" and not matched_labels:
-            taxon = fields.get("taxon", "")
-            if taxon and any(_term_in_text(term, taxon) for term in search_terms):
-                matched_labels = [mapping.label]
-                text = taxon
-                field = "taxon"
 
         if matched_labels:
             excerpt = text if len(text) <= 240 else text[:237] + "..."

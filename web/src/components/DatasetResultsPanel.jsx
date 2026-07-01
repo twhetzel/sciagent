@@ -1,7 +1,13 @@
+import { useState } from 'react'
+
 function ConceptChip({ mapping, variant = 'matched' }) {
+  const title = mapping.explanation
+    ? `${mapping.curie} — ${mapping.explanation}`
+    : `${mapping.curie} (${mapping.source || 'unknown'}, ${mapping.match_type || 'unknown'})`
   return (
-    <span className={`concept-chip concept-chip--${variant}`} title={mapping.curie}>
+    <span className={`concept-chip concept-chip--${variant}`} title={title}>
       {mapping.slot}: {mapping.label}
+      {mapping.source ? <span className="concept-chip-source"> · {mapping.source}</span> : null}
     </span>
   )
 }
@@ -98,6 +104,14 @@ function DatasetCard({ candidate, rank }) {
         {candidate.sample_count != null && (
           <span>Samples: {candidate.sample_count}</span>
         )}
+        {candidate.retrieval_strategy && (
+          <span>
+            Retrieved via {candidate.retrieval_strategy}
+            {candidate.retrieval_search_term ? (
+              <> · <code>{candidate.retrieval_search_term}</code></>
+            ) : null}
+          </span>
+        )}
       </div>
 
       <WarningList warnings={candidate.metadata_warnings} title="Metadata warnings" />
@@ -159,21 +173,111 @@ function DatasetCard({ candidate, rank }) {
   )
 }
 
+function AgentContextPanel({ agentContext }) {
+  const [format, setFormat] = useState('markdown')
+  const [copied, setCopied] = useState(false)
+  const [expanded, setExpanded] = useState(false)
+
+  if (!agentContext) return null
+
+  const content =
+    format === 'markdown'
+      ? agentContext.markdown
+      : JSON.stringify(agentContext.json, null, 2)
+
+  async function handleCopy() {
+    if (!content) return
+    try {
+      await navigator.clipboard.writeText(content)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 2000)
+    } catch {
+      setCopied(false)
+    }
+  }
+
+  return (
+    <div className="dataset-agent-context">
+      <div className="dataset-agent-context-header">
+        <strong>Agent context export</strong>
+        <div className="dataset-agent-context-actions">
+          <div className="dataset-agent-context-toggle" role="tablist" aria-label="Context format">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={format === 'markdown'}
+              className={format === 'markdown' ? 'is-active' : ''}
+              onClick={() => setFormat('markdown')}
+            >
+              Markdown
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={format === 'json'}
+              className={format === 'json' ? 'is-active' : ''}
+              onClick={() => setFormat('json')}
+            >
+              JSON
+            </button>
+          </div>
+          <button type="button" className="dataset-agent-context-copy" onClick={handleCopy}>
+            {copied ? 'Copied' : 'Copy'}
+          </button>
+          <button
+            type="button"
+            className="dataset-agent-context-view"
+            onClick={() => setExpanded((value) => !value)}
+          >
+            {expanded ? 'Hide' : 'View'}
+          </button>
+        </div>
+      </div>
+      <p className="dataset-agent-context-note">
+        Structured context for downstream agents — includes query facets, grounded concepts,
+        evidence, warnings, and cautions.
+      </p>
+      {expanded && (
+        <pre className="dataset-agent-context-body">{content}</pre>
+      )}
+    </div>
+  )
+}
+
 export default function DatasetResultsPanel({ datasetSearch }) {
   if (!datasetSearch) return null
 
-  const { interpreted_query: interpreted, concept_mappings: mappings, candidates } =
-    datasetSearch
+  const {
+    interpreted_query: interpreted,
+    concept_mappings: mappings,
+    candidates,
+    agent_context: agentContext,
+  } = datasetSearch
 
   return (
     <section className="dataset-results">
       <header className="dataset-results-header">
         <h2>Dataset discovery</h2>
         <p>
-          Ontology-grounded search via {datasetSearch.source || 'GEO'} —{' '}
+          Ontology-grounded search via {datasetSearch.source || 'GEO'}
+          {datasetSearch.repository ? ` (${datasetSearch.repository})` : ''} —{' '}
           {datasetSearch.total_found ?? candidates?.length ?? 0} total hits
+          {datasetSearch.search_term ? (
+            <>
+              {' '}
+              · primary query: <code>{datasetSearch.search_term}</code>
+            </>
+          ) : null}
+          {datasetSearch.search_strategies?.length > 0 ? (
+            <>
+              {' '}
+              · {datasetSearch.search_strategies.length} search strategies
+            </>
+          ) : null}
         </p>
       </header>
+
+      <AgentContextPanel agentContext={agentContext} />
 
       {interpreted && (
         <div className="dataset-interpreted">

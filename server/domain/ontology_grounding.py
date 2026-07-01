@@ -1,85 +1,35 @@
-"""Curated seed mappings for ontology-grounded dataset search.
-
-Used by the dataset-discovery **Ground Query** step. This is query-side ontology
-grounding and is separate from tools/ontology_normalizer.py (tool-result normalization
-on the generic gene/literature/ClinVar path).
-"""
+"""Ontology grounding helpers for dataset discovery search and evidence."""
 
 from __future__ import annotations
 
 from .dataset_search import ConceptMapping, InterpretedQuery
+from .ontology_grounder import OntologyGrounder
 
-SEED_CONCEPTS: dict[str, dict] = {
-    "ulcerative colitis": {
-        "slot": "disease",
-        "curie": "MONDO:0005101",
-        "label": "ulcerative colitis",
-        "ontology": "MONDO",
-        "synonyms": ["ulcerative colitis", "UC", "colitis ulcerative"],
-    },
-    "colon": {
-        "slot": "tissue",
-        "curie": "UBERON:0001155",
-        "label": "colon",
-        "ontology": "UBERON",
-        "synonyms": ["colon", "colonic", "large intestine", "large bowel"],
-    },
-    "RNA-seq": {
-        "slot": "assay",
-        "curie": "OBI:0002117",
-        "label": "RNA-seq",
-        "ontology": "OBI",
-        "synonyms": [
-            "RNA-seq",
-            "RNA seq",
-            "RNA sequencing",
-            "RNAseq",
-            "transcriptome profiling",
-            "RNA-Seq",
-        ],
-    },
-    "human": {
-        "slot": "organism",
-        "curie": "NCBITaxon:9606",
-        "label": "Homo sapiens",
-        "ontology": "NCBITaxon",
-        "synonyms": ["human", "Homo sapiens", "homo sapiens", "Homo sapiens (human)"],
-    },
+_default_grounder = OntologyGrounder()
+
+GEO_SEARCH_STRATEGIES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("strict", ("disease", "assay", "tissue")),
+    ("broad_1", ("disease", "assay")),
+    ("broad_2", ("disease", "tissue")),
+    ("broad_3", ("disease",)),
+)
+
+STRATEGY_PRIORITY = {
+    "strict": 0,
+    "broad_1": 1,
+    "broad_2": 2,
+    "broad_3": 3,
 }
 
 
-def _mapping_for_term(slot: str, query_term: str) -> ConceptMapping | None:
-    seed = SEED_CONCEPTS.get(query_term)
-    if not seed or seed["slot"] != slot:
-        return None
-    return ConceptMapping(
-        slot=slot,
-        query_term=query_term,
-        curie=seed["curie"],
-        label=seed["label"],
-        ontology=seed["ontology"],
-        synonyms=list(seed["synonyms"]),
-    )
+def ground_term(slot: str, term: str, top_k: int = 5) -> list[ConceptMapping]:
+    """Ground one facet term to ranked ontology concept candidates."""
+    return _default_grounder.ground(slot, term, top_k=top_k)
 
 
 def ground_interpreted_query(interpreted: InterpretedQuery) -> list[ConceptMapping]:
-    """Map interpreted query slots to curated ontology concepts."""
-    mappings: list[ConceptMapping] = []
-
-    slot_values = [
-        ("disease", interpreted.disease),
-        ("tissue", interpreted.tissue),
-        ("assay", interpreted.assay),
-        ("organism", interpreted.organism),
-    ]
-    for slot, term in slot_values:
-        if not term:
-            continue
-        mapping = _mapping_for_term(slot, term)
-        if mapping:
-            mappings.append(mapping)
-
-    return mappings
+    """Map interpreted query slots to the best grounded ontology concept per slot."""
+    return _default_grounder.ground_interpreted_query(interpreted)
 
 
 def search_terms_for_mapping(mapping: ConceptMapping) -> list[str]:
@@ -104,3 +54,21 @@ def build_geo_search_term(mappings: list[ConceptMapping]) -> str:
             groups.append(f"({' OR '.join(quoted)})")
 
     return " AND ".join(groups)
+
+
+def build_geo_search_queries(
+    mappings: list[ConceptMapping],
+) -> list[tuple[str, str]]:
+    """Build multi-strategy GEO queries from grounded concepts."""
+    by_slot = {mapping.slot: mapping for mapping in mappings}
+    queries: list[tuple[str, str]] = []
+
+    for strategy, slots in GEO_SEARCH_STRATEGIES:
+        subset = [by_slot[slot] for slot in slots if slot in by_slot]
+        if not subset:
+            continue
+        search_term = build_geo_search_term(subset)
+        if search_term:
+            queries.append((strategy, search_term))
+
+    return queries

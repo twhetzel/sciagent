@@ -6,6 +6,7 @@ from .dataset_search import ConceptMapping, DatasetCandidate, EvidenceSnippet
 from .evidence_extraction import (
     build_metadata_warnings,
     build_observed_metadata,
+    detect_mouse_model_of_human_disease,
     extract_evidence_for_mapping,
 )
 
@@ -34,6 +35,12 @@ def annotate_dataset_candidates(
             mapping_by_slot,
             observed["observed_assay"] or "unknown",
         )
+        is_model, model_warning = detect_mouse_model_of_human_disease(
+            fields,
+            mapping_by_slot.get("disease"),
+        )
+        if is_model and model_warning:
+            metadata_warnings.append(model_warning)
         evidence_conflicts = [
             warning
             for warning in metadata_warnings
@@ -54,9 +61,16 @@ def annotate_dataset_candidates(
                 )
                 evidence_snippets.extend(snippets)
             else:
-                why_partial.append(
-                    f"{mapping.slot}: requested {mapping.label}, not supported by returned metadata"
-                )
+                if mapping.slot == "organism" and is_model:
+                    why_partial.append(
+                        f"{mapping.slot}: requested {mapping.label}, but structured metadata indicates Mus musculus (animal model)"
+                    )
+                else:
+                    why_partial.append(
+                        f"{mapping.slot}: requested {mapping.label}, not supported by returned metadata"
+                    )
+
+        match_status = "model" if is_model else candidate.match_status
 
         annotated.append(
             candidate.model_copy(
@@ -72,6 +86,7 @@ def annotate_dataset_candidates(
                     "why_partial": why_partial,
                     "metadata_warnings": metadata_warnings,
                     "evidence_conflicts": evidence_conflicts,
+                    "match_status": match_status,
                 }
             )
         )

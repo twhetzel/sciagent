@@ -35,7 +35,13 @@ def rank_annotated_candidates(
         covered = len(matched_slots & expected_slots)
         evidence_coverage = covered / len(expected_slots) if expected_slots else 0.0
         score = slot_score + (SLOT_WEIGHTS["evidence_coverage"] * evidence_coverage)
-        match_status = "full" if covered == len(expected_slots) and expected_slots else "partial"
+
+        if candidate.match_status == "model":
+            match_status = "model"
+        elif covered == len(expected_slots) and expected_slots:
+            match_status = "full"
+        else:
+            match_status = "partial"
 
         ranked.append(
             candidate.model_copy(

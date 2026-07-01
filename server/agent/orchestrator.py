@@ -97,7 +97,7 @@ class AgentOrchestrator:
                 "ground_query",
                 {
                     "label": "Ground Query",
-                    "description": "Map requested facets to ontology concepts using curated seed mappings",
+                    "description": "Map requested facets to ontology concepts via OLS/BioPortal with curated fallback",
                     "concept_mappings": [m.model_dump() for m in concept_mappings],
                     "mapping_count": len(concept_mappings),
                 },
@@ -108,9 +108,10 @@ class AgentOrchestrator:
                 "search_repository",
                 {
                     "label": "Search Repository",
-                    "description": "Search GEO using grounded labels and synonyms",
+                    "description": "Run multi-strategy GEO search using grounded labels and synonyms",
                     "repository": search_result.get("repository", "GEO"),
                     "search_term": search_result.get("search_term", ""),
+                    "search_strategies": search_result.get("search_strategies", []),
                     "total_found": search_result.get("total_found", 0),
                     "record_count": len(search_result.get("records", [])),
                     "source": search_result.get("source", "NCBI GEO"),
@@ -156,6 +157,7 @@ class AgentOrchestrator:
                 },
             )
 
+            from domain.dataset_context_export import export_dataset_search_agent_context
             from domain.dataset_search import DatasetSearchResult
 
             result = DatasetSearchResult(
@@ -165,8 +167,12 @@ class AgentOrchestrator:
                 candidates=ranked,
                 total_found=search_result.get("total_found", len(ranked)),
                 source=search_result.get("source", "NCBI GEO"),
+                repository=search_result.get("repository", "GEO"),
+                search_term=search_result.get("search_term") or None,
+                search_strategies=search_result.get("search_strategies", []),
             )
             result_payload = result.model_dump()
+            result_payload["agent_context"] = export_dataset_search_agent_context(result)
             final_response = self._format_dataset_search_response(result)
 
             self.tracer.log_step(

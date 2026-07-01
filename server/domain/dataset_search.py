@@ -24,7 +24,12 @@ class ConceptMapping(BaseModel):
     curie: str = Field(..., description="Ontology CURIE, e.g. MONDO:0005101")
     label: str = Field(..., description="Preferred ontology label")
     ontology: str = Field(..., description="Ontology prefix, e.g. MONDO")
+    iri: str | None = Field(default=None, description="Ontology term IRI when available")
     synonyms: list[str] = Field(default_factory=list, description="Search synonyms")
+    match_type: str = Field(default="unknown", description="How the concept was matched")
+    source: str = Field(default="unknown", description="Grounding provider that produced the match")
+    confidence: float = Field(default=0.0, description="Relative confidence in the grounding")
+    explanation: str = Field(default="", description="Human-readable grounding rationale")
 
 
 class InterpretedQuery(BaseModel):
@@ -65,7 +70,15 @@ class DatasetCandidate(BaseModel):
     score: float = 0.0
     match_status: str = Field(
         default="partial",
-        description="full or partial based on evidence coverage",
+        description="full, partial, or model based on evidence coverage",
+    )
+    retrieval_strategy: str | None = Field(
+        default=None,
+        description="GEO search strategy that retrieved this candidate",
+    )
+    retrieval_search_term: str | None = Field(
+        default=None,
+        description="GEO query string that retrieved this candidate",
     )
     why_matched: list[str] = Field(default_factory=list)
     why_partial: list[str] = Field(default_factory=list)
@@ -82,3 +95,12 @@ class DatasetSearchResult(BaseModel):
     candidates: list[DatasetCandidate] = Field(default_factory=list)
     total_found: int = 0
     source: str = "NCBI GEO"
+    repository: str = Field(default="GEO", description="Repository identifier searched")
+    search_term: str | None = Field(
+        default=None,
+        description="Primary repository query string used when available",
+    )
+    search_strategies: list[dict[str, str | int]] = Field(
+        default_factory=list,
+        description="Multi-query retrieval strategies and hit counts",
+    )

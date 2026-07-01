@@ -307,6 +307,80 @@
   font-size: 0.85rem;
 }
 
+.dataset-agent-context {
+  margin-bottom: 1rem;
+  padding: 0.75rem;
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface-solid);
+}
+
+.dataset-agent-context-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.dataset-agent-context-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.dataset-agent-context-toggle {
+  display: inline-flex;
+  border: 1px solid var(--chip-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.dataset-agent-context-toggle button {
+  background: var(--chip-bg);
+  border: none;
+  color: var(--text-secondary);
+  padding: 0.35rem 0.65rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.dataset-agent-context-toggle button.is-active {
+  background: var(--accent-primary);
+  color: #fff;
+}
+
+.dataset-agent-context-copy,
+.dataset-agent-context-view {
+  background: var(--chip-bg);
+  border: 1px solid var(--chip-border);
+  color: var(--text-primary);
+  padding: 0.35rem 0.65rem;
+  border-radius: var(--radius-md);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.dataset-agent-context-note {
+  margin: 0.5rem 0 0;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+}
+
+.dataset-agent-context-body {
+  margin: 0.75rem 0 0;
+  padding: 0.75rem;
+  max-height: 280px;
+  overflow: auto;
+  border-radius: var(--radius-md);
+  background: var(--bg-code, rgba(0, 0, 0, 0.2));
+  font-size: 0.75rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .dataset-interpreted,
 .dataset-grounded {
   margin-bottom: 1rem;
@@ -349,6 +423,11 @@
   border-color: rgba(16, 185, 129, 0.35);
 }
 
+.concept-chip-source {
+  opacity: 0.75;
+  font-size: 0.75em;
+}
+
 .dataset-match-status {
   margin-left: 0.5rem;
   font-family: var(--font-mono);
@@ -367,6 +446,15 @@
 .dataset-match-status--partial {
   background: rgba(245, 158, 11, 0.15);
   color: var(--accent-warning);
+}
+
+.dataset-match-status--model {
+  background: rgba(168, 85, 247, 0.15);
+  color: #9333ea;
+}
+
+.dataset-card--model {
+  border-color: rgba(168, 85, 247, 0.35);
 }
 
 .dataset-match-status--conflict {

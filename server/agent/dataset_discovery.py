@@ -3,8 +3,8 @@ Ontology-grounded GEO dataset discovery pipeline.
 
 Pipeline steps (dataset-discovery path only):
   1. Interpret Query      — extract disease, tissue, assay, organism facets
-  2. Ground Query         — map requested facets to ontology concepts (curated seeds)
-  3. Search Repository    — query GEO with grounded labels/synonyms
+  2. Ground Query         — map requested facets via OLS/BioPortal/LLM with curated fallback
+  3. Search Repository    — multi-strategy GEO search using grounded labels/synonyms
   4. Normalize Records    — convert GEO API payloads into shared DatasetCandidate models
   5. Annotate Evidence    — field-level concept/evidence matching on returned records
   6. Rank Results         — score by evidence coverage
@@ -33,7 +33,7 @@ def interpret_query(query: str) -> InterpretedQuery:
 
 
 def ground_query(interpreted: InterpretedQuery):
-    """Step 2: ontology grounding of requested facets (curated seed mappings)."""
+    """Step 2: provider-based ontology grounding of requested facets."""
     return ground_interpreted_query(interpreted)
 
 
@@ -73,4 +73,7 @@ def run_dataset_discovery(query: str, max_results: int = 15) -> DatasetSearchRes
         candidates=ranked,
         total_found=search_result.get("total_found", len(ranked)),
         source=search_result.get("source", "NCBI GEO"),
+        repository=search_result.get("repository", "GEO"),
+        search_term=search_result.get("search_term") or None,
+        search_strategies=search_result.get("search_strategies", []),
     )
