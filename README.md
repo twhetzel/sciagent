@@ -1,6 +1,6 @@
-# SciAgent
+# SciAgent Studio
 
-SciAgent is a scientific multi-database search agent with transparent execution tracing. Ask a natural-language question; the agent plans which databases to query, executes tools server-side, and returns both a synthesized answer and a step-by-step execution trace.
+SciAgent Studio is a scientific multi-database search agent with transparent execution tracing. Ask a natural-language question; the agent plans which databases to query, executes tools server-side, and returns both a synthesized answer and a step-by-step execution trace.
 
 ## Architecture
 
@@ -15,7 +15,7 @@ FastAPI (sciagent_server)
         └── ToolRegistry → external scientific APIs
 ```
 
-The FastAPI layer is intentionally thin: it only calls `orchestrator.run(prompt)` and exposes the result. All routing logic lives in the ported SciAgent agent module.
+The FastAPI layer is intentionally thin: it only calls `orchestrator.run(prompt)` and exposes the result. All routing logic lives in the ported SciAgent Studio agent module.
 
 ## Tool inventory
 
@@ -29,13 +29,67 @@ The FastAPI layer is intentionally thin: it only calls `orchestrator.run(prompt)
 | `clinvar` | NCBI E-utilities (ClinVar) | Same NCBI env vars as PubMed |
 | `alphafold` | AlphaFold EBI API | None |
 | `summarize` | OpenAI / Anthropic | `OPENAI_API_KEY` and/or `ANTHROPIC_API_KEY` |
+| *(post-processing)* | OLS / BioPortal / Claude | Optional `BIOPORTAL_API_KEY`, `ANTHROPIC_API_KEY` for ontology normalization |
 
-The orchestrator uses keyword heuristics (not LLM tool-calling) to select tools. Example queries:
+The orchestrator uses keyword heuristics (not LLM tool-calling) to select tools. After tools finish, ontology normalization runs automatically. See [Example queries](#example-queries) below.
 
-- `BRCA1 gene` — MyGene, UniProt, ClinVar
-- `TP53 variants` — ClinVar, gene/protein tools
-- `breast cancer literature` — PubMed, OpenAlex, Europe PMC
-- `AlphaFold structure for EGFR` — AlphaFold (+ UniProt lookup)
+## Example queries
+
+SciAgent Studio routes queries based on keywords and simple entity extraction (gene symbols, disease terms). Use the **execution trace panel** in the UI to see which tools ran and what parameters were passed.
+
+### Queries that work today
+
+| Question | Tools typically invoked | What you should see |
+|----------|-------------------------|---------------------|
+| `BRCA1 gene` | MyGene, UniProt | Gene summary, Entrez/Ensembl IDs, protein accession |
+| `Tell me about TP53` | MyGene, UniProt | Same as above for TP53 |
+| `TP53 variants` | MyGene, UniProt, ClinVar | Gene/protein info plus ClinVar variant list |
+| `marfan syndrome variants` | PubMed, OpenAlex, Europe PMC, ClinVar | Literature + ClinVar condition search (disease term extracted as `marfan`) |
+| `breast cancer literature` | PubMed, OpenAlex, Europe PMC | Normalized article hits from three literature sources |
+| `search articles on cystic fibrosis` | PubMed, OpenAlex, Europe PMC | Literature results (disease keyword triggers literature tools) |
+| `AlphaFold structure for EGFR` | AlphaFold, UniProt | Structure confidence, PDB URL, protein metadata |
+| `Summarize BRCA1 gene` | MyGene, UniProt, summarize | Requires `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` for the summarize step |
+| `CFTR pathogenic variants` | MyGene, UniProt, ClinVar | Gene/protein metadata plus pathogenic variant list |
+| `APOE gene structure` | MyGene, UniProt, AlphaFold | Gene summary, protein record, and AlphaFold model |
+| `Find research on Huntington disease` | PubMed, OpenAlex, Europe PMC | Literature search (use `find`/`research` + `disease`) |
+| `What ClinVar variants are linked to Marfan syndrome?` | PubMed, OpenAlex, Europe PMC, ClinVar | Condition-based ClinVar search + literature |
+| `SIGMAR1 protein sequence` | MyGene, UniProt | Less common gene symbol; good routing smoke test |
+| `EGFR 3D structure` | MyGene, UniProt, AlphaFold | `3D` triggers AlphaFold alongside gene tools |
+| `Summarize TP53 gene function` | MyGene, UniProt, summarize | Summarize step aggregates gene/protein text |
+
+**Tips for reliable routing:**
+
+- Use standard gene symbols (`BRCA1`, not `brca1`).
+- Include action or domain keywords: `gene`, `variants`, `literature`, `structure`, `search`, `pathogenic`, `summarize`.
+- For ClinVar **by condition**, include a disease term (`syndrome`, `disease`, `disorder`, `condition`)—not just a colloquial name.
+- Multi-tool queries can take 10–30 seconds; watch the trace panel for progress.
+
+### Ontology normalization
+
+After tools run, the agent maps free-text terms from tool results to formal ontology IDs (MONDO, HP, GO, NCBITaxon, CHEBI, UBERON) using a three-tier lookup: **OLS** → **BioPortal** (`BIOPORTAL_API_KEY`) → **Claude synonym expansion** (`ANTHROPIC_API_KEY`). Results appear on each tool payload as `normalized_terms` and in a **`normalize`** trace step.
+
+Look for the **Normalize** step in the trace panel (matched/unmatched counts and CURIE chips). Expand it to see each mapping: source tool, tier, `match_type`, and resolved label.
+
+| Question | What normalization demonstrates | Optional env vars |
+|----------|--------------------------------|-------------------|
+| `marfan syndrome variants` | ClinVar condition text → MONDO via OLS tier 1 (`match_type: exact` or `synonym`) | — |
+| `What ClinVar variants are linked to Marfan syndrome?` | Same ClinVar condition grounding after a multi-tool run | — |
+| `CFTR pathogenic variants` | MyGene GO terms and UniProt organism name → GO / NCBITaxon | — |
+| `TP53 variants` | Gene display name and ClinVar variant conditions → MONDO / HP where matched | — |
+| `breast cancer gene` (colloquial phrasing) | Tier 3: Claude expands synonyms, then OLS retry (`match_type: ai_expanded_synonym`) | `ANTHROPIC_API_KEY` |
+| Niche agricultural/environmental terms in tool results | BioPortal fallback when OLS has no hit | `BIOPORTAL_API_KEY` |
+
+**Note:** Pure literature queries (e.g. `breast cancer literature`) usually produce a **skipped** normalize step today—PubMed/OpenAlex/Europe PMC results do not yet expose MeSH/keyword fields for extraction. Use gene, ClinVar, or MyGene/UniProt queries to see normalization in action.
+
+Normalization is non-blocking: if lookup fails, the query still completes and unmatched terms show `match_type: "unmatched"`.
+
+**Queries that route poorly today** (orchestrator heuristics, not normalization):
+
+| Question | Issue | Better phrasing |
+|----------|--------|-----------------|
+| `Type 2 diabetes variants` | No `disease`/`syndrome`/… keyword → ClinVar params may not resolve | `Type 2 diabetes disease variants` or `ClinVar variants for diabetes condition` |
+| `childhood asthma` | No literature or disease keyword | `Find literature on childhood asthma` |
+| `What is cystic fibrosis` | No tool keywords unless gene symbol present | `search articles on cystic fibrosis` or `CFTR gene` |
 
 ## Project layout
 
@@ -129,6 +183,7 @@ Each trace document includes:
 | `tool_execution` | Tool name, status, parameters, result |
 | `observe` | Success/failure counts |
 | `synthesize` | Updated plan |
+| `normalize` | Ontology mappings (tier, CURIE, match type) per extracted term |
 | `error` | Failure details (if any) |
 
 The React trace panel renders these as a color-coded timeline instead of raw JSON.
@@ -143,7 +198,8 @@ See [`.env.example`](.env.example). Key variables:
 | `SCIAGENT_CORS_ORIGINS` | Allowed browser origins (comma-separated) |
 | `PUBMED_EMAIL` | NCBI politeness for PubMed/ClinVar |
 | `OPENALEX_EMAIL` | OpenAlex `mailto` parameter |
-| `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | Optional summarization |
+| `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | Optional summarization and ontology tier 3 |
+| `BIOPORTAL_API_KEY` | Optional BioPortal ontology lookup (tier 2) |
 
 ## Deployment
 

@@ -1,4 +1,4 @@
-const STORAGE_KEY = 'sciagent-theme';
+const STORAGE_KEY = 'sciagent-studio-theme';
 
 export const THEMES = {
   dark: 'dark',

@@ -43,7 +43,7 @@ export default function ChatPanel({ onSubmit, loading, messages }) {
     <section className="chat-panel">
       <header className="chat-header">
         <div>
-          <h1>SciAgent</h1>
+          <h1>SciAgent Studio</h1>
           <p>Multi-database scientific search with transparent execution tracing</p>
         </div>
       </header>
@@ -63,7 +63,7 @@ export default function ChatPanel({ onSubmit, loading, messages }) {
 
         {messages.map((msg, index) => (
           <div key={index} className={`message message--${msg.role}`}>
-            <div className="message-label">{msg.role === 'user' ? 'You' : 'SciAgent'}</div>
+            <div className="message-label">{msg.role === 'user' ? 'You' : 'SciAgent Studio'}</div>
             <div className="message-body">
               {msg.role === 'assistant' ? renderResponse(msg.content) : msg.content}
             </div>
@@ -72,7 +72,7 @@ export default function ChatPanel({ onSubmit, loading, messages }) {
 
         {loading && (
           <div className="message message--assistant">
-            <div className="message-label">SciAgent</div>
+            <div className="message-label">SciAgent Studio</div>
             <div className="message-body loading-pulse">Searching databases…</div>
           </div>
         )}

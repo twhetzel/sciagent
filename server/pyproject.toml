@@ -1,7 +1,7 @@
 [project]
 name = "sciagent-server"
 version = "0.1.0"
-description = "SciAgent — multi-database scientific search agent API"
+description = "SciAgent Studio — multi-database scientific search agent API"
 requires-python = ">=3.10"
 dependencies = [
   "fastapi>=0.115.0",

@@ -1,5 +1,5 @@
 """
-Tools module for SciAgent
+Tools module for SciAgent Studio
 Contains various scientific tools for data retrieval and analysis
 """
 

@@ -363,9 +363,11 @@
 }
 
 .trace-step--plan { border-left-color: var(--accent-primary); }
+.trace-step--iteration { border-left-color: #a78bfa; }
 .trace-step--tool { border-left-color: var(--accent-success); }
 .trace-step--observe { border-left-color: var(--accent-info); }
 .trace-step--synth { border-left-color: var(--accent-warning); }
+.trace-step--normalize { border-left-color: #14b8a6; }
 .trace-step--error { border-left-color: var(--accent-danger); }
 
 .trace-step summary {

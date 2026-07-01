@@ -32,7 +32,7 @@ def fetch_openalex(query: str, max_results: int = 10) -> Dict[str, Any]:
             "https://api.openalex.org/works",
             params=params,
             timeout=15,
-            headers={"User-Agent": "SciAgent/0.1 (mailto:" + email + ")" if email else "SciAgent/0.1"},
+            headers={"User-Agent": "SciAgentStudio/0.1 (mailto:" + email + ")" if email else "SciAgentStudio/0.1"},
         )
         response.raise_for_status()
         data = response.json()

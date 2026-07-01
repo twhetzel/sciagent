@@ -1,4 +1,4 @@
-"""FastAPI entrypoint for SciAgent."""
+"""FastAPI entrypoint for SciAgent Studio."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ from agent.registry import ToolRegistry
 from . import config
 
 app = FastAPI(
-    title="SciAgent API",
+    title="SciAgent Studio API",
     description="Multi-database scientific search agent with transparent execution tracing",
     version=config.API_VERSION,
 )

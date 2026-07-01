@@ -56,6 +56,10 @@ class AgentOrchestrator:
                     
                 plan = updated_plan
             
+            # Ontology normalization (non-blocking — failures must not abort the query)
+            results, normalize_trace = self._normalize_results(results)
+            self.tracer.log_step("normalize", normalize_trace)
+
             # Final synthesis
             final_response = self._final_synthesis(results, query)
             
@@ -250,17 +254,20 @@ class AgentOrchestrator:
         
         # Remove trailing question marks, etc
         cleaned_query = cleaned_query.strip('?.,;:')
-        
-        # For multi-word diseases, extract the key term
-        # e.g., "marfan syndrome" -> "marfan", "alzheimer's disease" -> "alzheimer"
-        if 'syndrome' in cleaned_query or 'disease' in cleaned_query:
-            # Extract the main disease name (first significant word)
-            words = cleaned_query.split()
-            for word in words:
-                if word not in ['syndrome', 'disease', 'disorder', 'condition', 's', 'the', 'a', 'an']:
-                    return word
-        
-        return cleaned_query.strip()
+
+        # Drop trailing query/action words so "marfan syndrome variants" → "marfan syndrome"
+        trailing_words = {
+            'variant', 'variants', 'mutation', 'mutations', 'gene', 'genes',
+            'linked', 'associated', 'involved', 'related', 'clinical', 'pathogenic',
+            'clinvar', 'literature', 'articles', 'paper', 'papers', 'research',
+            'what', 'which', 'are', 'is', 'the', 'to', 'with', 'for', 'in', 'on', 'a', 'an',
+        }
+        words = cleaned_query.split()
+        while words and words[-1] in trailing_words:
+            words.pop()
+        cleaned_query = ' '.join(words).strip()
+
+        return cleaned_query
     
     def _extract_text_for_summarization(self, plan: Dict[str, Any]) -> str:
         """Extract text from previous results for summarization"""
@@ -313,7 +320,9 @@ class AgentOrchestrator:
                                'HOW', 'WHY', 'WHEN', 'WHERE', 'CAN', 'HAS', 'HAVE', 'HAD', 'WAS', 'WERE',
                                'SYNDROME', 'DISEASE', 'DISORDER', 'CONDITION', 'INVOLVED', 'ASSOCIATED',
                                'CAUSES', 'CAUSE', 'MARFAN', 'ALZHEIMER', 'PARKINSON', 'CANCER', 'CYSTIC',
-                               'FIBROSIS', 'HUNTINGTON', 'MUSCULAR', 'DYSTROPHY', 'SICKLE', 'CELL']
+                               'FIBROSIS', 'HUNTINGTON', 'MUSCULAR', 'DYSTROPHY', 'SICKLE', 'CELL',
+                               'VARIANT', 'VARIANTS', 'MUTATION', 'MUTATIONS', 'PATHOGENIC', 'CLINVAR',
+                               'LINKED', 'LITERATURE', 'ARTICLES', 'SEARCH', 'RESEARCH']
                 # Gene symbol heuristic: has a number OR is 3+ chars (excluding very common words)
                 if (re.match(r'^[A-Z][A-Z0-9]+$', upper_word) and 
                     upper_word not in common_words and
@@ -387,6 +396,21 @@ class AgentOrchestrator:
             not plan.get("needs_retry", False)
         )
     
+    def _normalize_results(self, results: List[Dict[str, Any]]) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        """Map tool-result text terms to formal ontology terms."""
+        try:
+            from tools.ontology_normalizer import normalize_tool_results
+            return normalize_tool_results(results)
+        except Exception as e:
+            return results, {
+                "status": "error",
+                "error": str(e),
+                "total_terms": 0,
+                "matched": 0,
+                "unmatched": 0,
+                "mappings": [],
+            }
+
     def _final_synthesis(self, results: List[Dict[str, Any]], query: str) -> str:
         """Generate the final response based on all collected results"""
         if not results:

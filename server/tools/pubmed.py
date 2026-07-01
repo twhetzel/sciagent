@@ -30,7 +30,7 @@ def fetch_pubmed(query: str, max_results: int = 10) -> Dict[str, Any]:
             "term": query,
             "retmax": max_results,
             "retmode": "json",
-            "tool": os.getenv("PUBMED_TOOL", "sciagent"),
+            "tool": os.getenv("PUBMED_TOOL", "sciagent_studio"),
             "email": os.getenv("PUBMED_EMAIL", "")
         }
         
@@ -57,7 +57,7 @@ def fetch_pubmed(query: str, max_results: int = 10) -> Dict[str, Any]:
             "db": "pubmed",
             "id": ",".join(pmids),
             "retmode": "xml",
-            "tool": os.getenv("PUBMED_TOOL", "sciagent"),
+            "tool": os.getenv("PUBMED_TOOL", "sciagent_studio"),
             "email": os.getenv("PUBMED_EMAIL", "")
         }
         

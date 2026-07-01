@@ -1,4 +1,4 @@
-"""Environment-based configuration for SciAgent server."""
+"""Environment-based configuration for SciAgent Studio server."""
 
 from __future__ import annotations
 

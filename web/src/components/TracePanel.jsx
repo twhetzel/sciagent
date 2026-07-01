@@ -16,12 +16,90 @@ function stepClass(name, data) {
     return data?.status === 'error' ? 'trace-step--error' : 'trace-step--tool'
   }
   if (name === 'plan') return 'trace-step--plan'
+  if (name === 'iteration') return 'trace-step--iteration'
   if (name === 'observe') return 'trace-step--observe'
   if (name === 'synthesize') return 'trace-step--synth'
+  if (name === 'normalize') return 'trace-step--normalize'
   return 'trace-step--default'
 }
 
-function summarizeStep(name, data) {
+function getIterationContext(steps, stepIndex) {
+  const iterationNum = steps[stepIndex]?.data?.iteration ?? stepIndex + 1
+
+  let plannedTools = []
+  for (let i = stepIndex - 1; i >= 0; i -= 1) {
+    const step = steps[i]
+    if (step.name === 'plan') {
+      plannedTools = step.data?.plan?.tools_needed || []
+      break
+    }
+    if (step.name === 'synthesize') {
+      plannedTools = step.data?.updated_plan?.tools_needed || []
+      break
+    }
+  }
+
+  const executedTools = []
+  const toolStatuses = []
+  for (let i = stepIndex + 1; i < steps.length; i += 1) {
+    const step = steps[i]
+    if (step.name === 'observe' || step.name === 'iteration') break
+    if (step.name === 'tool_execution' && step.data?.tool) {
+      executedTools.push(step.data.tool)
+      toolStatuses.push({
+        tool: step.data.tool,
+        status: step.data.status || 'unknown',
+      })
+    }
+  }
+
+  return { iterationNum, plannedTools, executedTools, toolStatuses }
+}
+
+function summarizeIteration(data, steps, stepIndex) {
+  const { iterationNum, plannedTools, executedTools, toolStatuses } = getIterationContext(
+    steps,
+    stepIndex,
+  )
+
+  if (executedTools.length > 0) {
+    const successCount = toolStatuses.filter((t) => t.status === 'success').length
+    const failed = toolStatuses.filter((t) => t.status === 'error').map((t) => t.tool)
+    let summary = `Running ${executedTools.join(', ')}`
+    if (failed.length > 0) {
+      summary += ` (${successCount}/${executedTools.length} succeeded)`
+    }
+    return {
+      title: `Iteration ${iterationNum}`,
+      summary,
+      chips: executedTools,
+    }
+  }
+
+  if (plannedTools.length > 0 && iterationNum === 1) {
+    return {
+      title: `Iteration ${iterationNum}`,
+      summary: `Scheduled: ${plannedTools.join(', ')}`,
+      chips: plannedTools,
+    }
+  }
+
+  if (iterationNum > 1) {
+    return {
+      title: `Iteration ${iterationNum}`,
+      summary: 'Re-evaluating plan (no new tool calls)',
+      chips: plannedTools,
+    }
+  }
+
+  return {
+    title: `Iteration ${iterationNum}`,
+    summary: 'No tools scheduled for this iteration',
+    chips: [],
+  }
+}
+
+function summarizeStep(name, data, steps, stepIndex) {
   switch (name) {
     case 'plan':
       return {
@@ -30,11 +108,7 @@ function summarizeStep(name, data) {
         chips: data?.plan?.tools_needed || [],
       }
     case 'iteration':
-      return {
-        title: `Iteration ${data?.iteration ?? ''}`,
-        summary: 'Agent loop step',
-        chips: [],
-      }
+      return summarizeIteration(data, steps, stepIndex)
     case 'tool_execution':
       return {
         title: `Tool: ${data?.tool || 'unknown'}`,
@@ -55,6 +129,21 @@ function summarizeStep(name, data) {
         title: 'Synthesize',
         summary: data?.updated_plan?.needs_retry ? 'Plan updated — retry needed' : 'Plan updated',
         chips: data?.updated_plan?.tools_needed || [],
+      }
+    case 'normalize':
+      return {
+        title: 'Normalize',
+        summary:
+          data?.status === 'skipped'
+            ? 'No terms to normalize'
+            : data?.status === 'error'
+              ? data?.error || 'Normalization failed'
+              : `${data?.matched ?? 0} matched, ${data?.unmatched ?? 0} unmatched`,
+        chips: (data?.mappings || [])
+          .filter((m) => m.match_type && m.match_type !== 'unmatched')
+          .slice(0, 4)
+          .map((m) => m.curie || m.label)
+          .filter(Boolean),
       }
     case 'error':
       return {
@@ -84,12 +173,15 @@ function summarizeToolResult(data) {
   return 'Completed'
 }
 
-function StepCard({ step }) {
+function StepCard({ step, steps, stepIndex }) {
   const { name, timestamp, data } = step
-  const info = summarizeStep(name, data)
+  const info = summarizeStep(name, data, steps, stepIndex)
 
   return (
-    <details className={`trace-step ${stepClass(name, data)}`} open={name === 'tool_execution' || name === 'error'}>
+    <details
+      className={`trace-step ${stepClass(name, data)}`}
+      open={name === 'tool_execution' || name === 'error' || name === 'iteration' || name === 'normalize'}
+    >
       <summary>
         <span className="trace-step-name">{info.title}</span>
         <span className="trace-step-summary">{info.summary}</span>
@@ -128,7 +220,7 @@ function TraceDocument({ trace }) {
 
       <div className="trace-timeline">
         {(trace.steps || []).map((step, index) => (
-          <StepCard key={`${step.name}-${index}`} step={step} />
+          <StepCard key={`${step.name}-${index}`} step={step} steps={trace.steps} stepIndex={index} />
         ))}
       </div>
     </article>

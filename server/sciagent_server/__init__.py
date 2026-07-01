@@ -1,1 +1,1 @@
-"""SciAgent FastAPI server."""
+"""SciAgent Studio FastAPI server."""

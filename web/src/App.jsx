@@ -50,7 +50,7 @@ export default function App() {
   return (
     <div className="app-shell">
       <header className="top-bar">
-        <span className="brand">SciAgent</span>
+        <span className="brand">SciAgent Studio</span>
         <button type="button" className="theme-toggle" onClick={toggleTheme}>
           Toggle theme
         </button>

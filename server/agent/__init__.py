@@ -1,5 +1,5 @@
 """
-Agent module for SciAgent
+Agent module for SciAgent Studio
 Contains the core agent orchestration, tool registry, and tracing components
 """
 

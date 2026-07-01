@@ -31,7 +31,7 @@ def get_clinvar_variants(gene_symbol: str, max_results: int = 10) -> Dict[str, A
             "term": f"{gene_symbol}[gene]",
             "retmax": max_results,
             "retmode": "json",
-            "tool": os.getenv("PUBMED_TOOL", "sciagent"),
+            "tool": os.getenv("PUBMED_TOOL", "sciagent_studio"),
             "email": os.getenv("PUBMED_EMAIL", "")
         }
         
@@ -59,7 +59,7 @@ def get_clinvar_variants(gene_symbol: str, max_results: int = 10) -> Dict[str, A
             "db": "clinvar",
             "id": ",".join(variant_ids),
             "retmode": "json",
-            "tool": os.getenv("PUBMED_TOOL", "sciagent"),
+            "tool": os.getenv("PUBMED_TOOL", "sciagent_studio"),
             "email": os.getenv("PUBMED_EMAIL", "")
         }
         
@@ -128,7 +128,7 @@ def get_clinvar_by_variant_id(variant_id: str) -> Dict[str, Any]:
             "db": "clinvar",
             "id": variant_id,
             "retmode": "json",
-            "tool": os.getenv("PUBMED_TOOL", "sciagent"),
+            "tool": os.getenv("PUBMED_TOOL", "sciagent_studio"),
             "email": os.getenv("PUBMED_EMAIL", "")
         }
         
@@ -183,7 +183,7 @@ def search_clinvar_by_condition(condition: str, max_results: int = 10) -> Dict[s
             "term": f"{condition}[disease]",
             "retmax": max_results,
             "retmode": "json",
-            "tool": os.getenv("PUBMED_TOOL", "sciagent"),
+            "tool": os.getenv("PUBMED_TOOL", "sciagent_studio"),
             "email": os.getenv("PUBMED_EMAIL", "")
         }
         
@@ -208,7 +208,7 @@ def search_clinvar_by_condition(condition: str, max_results: int = 10) -> Dict[s
             "db": "clinvar",
             "id": ",".join(variant_ids),
             "retmode": "json",
-            "tool": os.getenv("PUBMED_TOOL", "sciagent"),
+            "tool": os.getenv("PUBMED_TOOL", "sciagent_studio"),
             "email": os.getenv("PUBMED_EMAIL", "")
         }
         
@@ -261,7 +261,7 @@ def get_pathogenic_variants(gene_symbol: str, max_results: int = 10) -> Dict[str
             "term": f"{gene_symbol}[gene] AND (pathogenic[clinical_significance] OR likely pathogenic[clinical_significance])",
             "retmax": max_results,
             "retmode": "json",
-            "tool": os.getenv("PUBMED_TOOL", "sciagent"),
+            "tool": os.getenv("PUBMED_TOOL", "sciagent_studio"),
             "email": os.getenv("PUBMED_EMAIL", "")
         }
         
@@ -286,7 +286,7 @@ def get_pathogenic_variants(gene_symbol: str, max_results: int = 10) -> Dict[str
             "db": "clinvar",
             "id": ",".join(variant_ids),
             "retmode": "json",
-            "tool": os.getenv("PUBMED_TOOL", "sciagent"),
+            "tool": os.getenv("PUBMED_TOOL", "sciagent_studio"),
             "email": os.getenv("PUBMED_EMAIL", "")
         }
         
@@ -392,7 +392,7 @@ def search_clinvar_by_rsid(rsid: str) -> Dict[str, Any]:
             "term": f"{clean_rsid}[rsid]",
             "retmax": 10,
             "retmode": "json",
-            "tool": os.getenv("PUBMED_TOOL", "sciagent"),
+            "tool": os.getenv("PUBMED_TOOL", "sciagent_studio"),
             "email": os.getenv("PUBMED_EMAIL", "")
         }
         
@@ -415,7 +415,7 @@ def search_clinvar_by_rsid(rsid: str) -> Dict[str, Any]:
             "db": "clinvar",
             "id": ",".join(variant_ids),
             "retmode": "json",
-            "tool": os.getenv("PUBMED_TOOL", "sciagent"),
+            "tool": os.getenv("PUBMED_TOOL", "sciagent_studio"),
             "email": os.getenv("PUBMED_EMAIL", "")
         }
         
@@ -541,7 +541,7 @@ def get_variants_by_significance(gene_symbol: str, significance: str = "pathogen
             "term": f"{gene_symbol}[gene] AND {search_term}",
             "retmax": 20,
             "retmode": "json",
-            "tool": os.getenv("PUBMED_TOOL", "sciagent"),
+            "tool": os.getenv("PUBMED_TOOL", "sciagent_studio"),
             "email": os.getenv("PUBMED_EMAIL", "")
         }
         
@@ -567,7 +567,7 @@ def get_variants_by_significance(gene_symbol: str, significance: str = "pathogen
             "db": "clinvar",
             "id": ",".join(variant_ids[:10]),  # Limit to first 10 for details
             "retmode": "json",
-            "tool": os.getenv("PUBMED_TOOL", "sciagent"),
+            "tool": os.getenv("PUBMED_TOOL", "sciagent_studio"),
             "email": os.getenv("PUBMED_EMAIL", "")
         }
         
