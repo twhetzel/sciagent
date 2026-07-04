@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 from domain.dataset_search import ConceptMapping, InterpretedQuery
-from domain.ontology_providers.base import OntologyProvider, merge_concept_candidates
+from domain.ontology_providers.base import (
+    OntologyProvider,
+    is_primary_tier_match,
+    merge_concept_candidates,
+    select_concept_with_debug,
+)
 from domain.ontology_providers.bioportal import BioPortalProvider
 from domain.ontology_providers.curated import CuratedAliasProvider
 from domain.ontology_providers.llm import LLMDisambiguationProvider
@@ -11,6 +16,7 @@ from domain.ontology_providers.ols import OLSProvider
 
 DEFAULT_PROVIDERS: tuple[str, ...] = ("ols", "bioportal", "llm_disambiguation", "curated")
 STRONG_MATCH_CONFIDENCE = 0.85
+CANDIDATE_POOL_SIZE = 12
 
 
 def default_providers() -> list[OntologyProvider]:
@@ -38,8 +44,9 @@ class OntologyGrounder:
         collected: list[ConceptMapping] = []
         for provider in self.providers:
             if provider.name == "llm_disambiguation" and collected:
-                best_confidence = max(item.confidence for item in collected)
-                if best_confidence >= STRONG_MATCH_CONFIDENCE:
+                merged = merge_concept_candidates(collected, slot=slot)
+                primary = [item for item in merged if is_primary_tier_match(slot, item)]
+                if primary and primary[0].confidence >= STRONG_MATCH_CONFIDENCE:
                     continue
 
             try:
@@ -48,8 +55,13 @@ class OntologyGrounder:
                 continue
 
             merged = merge_concept_candidates(collected, slot=slot)
-            if provider.name in {"ols", "bioportal"} and merged and merged[0].confidence >= STRONG_MATCH_CONFIDENCE:
-                break
+            if provider.name in {"ols", "bioportal"} and merged:
+                best = merged[0]
+                if (
+                    best.confidence >= STRONG_MATCH_CONFIDENCE
+                    and is_primary_tier_match(slot, best)
+                ):
+                    break
 
         ranked = merge_concept_candidates(collected, slot=slot)[:top_k]
         self._cache[cache_key] = ranked
@@ -67,7 +79,8 @@ class OntologyGrounder:
         for slot, term in slot_values:
             if not term:
                 continue
-            candidates = self.ground(slot, term, top_k=1)
-            if candidates:
-                mappings.append(candidates[0])
+            candidates = self.ground(slot, term, top_k=CANDIDATE_POOL_SIZE)
+            selected = select_concept_with_debug(candidates, slot=slot)
+            if selected is not None:
+                mappings.append(selected)
         return mappings

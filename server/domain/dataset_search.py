@@ -66,7 +66,19 @@ class ScoreBreakdown(BaseModel):
     evidence_conflicts_count: int = 0
     retrieval_strategy: str | None = None
     evidence_coverage: float = 0.0
-    final_score: float = 0.0
+    base_score: float = 0.0
+    quality_adjustment: float = 0.0
+    evidence_score: float = 0.0
+    rank_tier: float = 0.0
+    match_tier: float = 0.0
+    partial_assay_subtype: str | None = None
+    display_rank_score: float = 0.0
+    match_tier_note: str = ""
+    requested_assay: str | None = None
+    observed_assay: str | None = None
+    assay_mismatch: bool = False
+    assay_mismatch_note: str = ""
+    assay_rank_adjustment: float = 0.0
     match_status: str = "partial"
 
 
@@ -106,6 +118,14 @@ class ConceptMapping(BaseModel):
     source: str = Field(default="unknown", description="Grounding provider that produced the match")
     confidence: float = Field(default=0.0, description="Relative confidence in the grounding")
     explanation: str = Field(default="", description="Human-readable grounding rationale")
+    selection_reason: str = Field(
+        default="",
+        description="Why this concept was chosen over alternatives (facet ontology priority)",
+    )
+    rejected_candidates: list[dict[str, str | float | int]] = Field(
+        default_factory=list,
+        description="Non-selected grounding candidates with ontology tier and provider metadata",
+    )
 
 
 class InterpretedQuery(BaseModel):
@@ -139,11 +159,18 @@ class DatasetCandidate(BaseModel):
         description="Concepts supported by evidence in returned metadata",
     )
     observed_assay: str | None = None
+    assay_mismatch: bool = Field(
+        default=False,
+        description="True when requested assay differs from observed assay in metadata",
+    )
     observed_organism: str | None = None
     observed_disease: str | None = None
     observed_tissue: str | None = None
     evidence_snippets: list[EvidenceSnippet] = Field(default_factory=list)
-    score: float = 0.0
+    score: float = Field(
+        default=0.0,
+        description="Integrated display_rank_score (= match_tier × 10 + evidence_score)",
+    )
     match_status: str = Field(
         default="partial",
         description=(

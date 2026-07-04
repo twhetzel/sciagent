@@ -6,6 +6,8 @@ import inspect
 from typing import Dict, Any, List, Callable
 from dataclasses import dataclass
 
+from sciagent_server.config import is_capability_enabled
+
 
 @dataclass
 class ToolSchema:
@@ -33,9 +35,12 @@ class ToolRegistry:
             function: The function to call
             parameters: Parameter schema (optional)
         """
+        if not is_capability_enabled(name):
+            return
+
         if parameters is None:
             parameters = self._infer_parameters(function)
-            
+
         schema = ToolSchema(
             name=name,
             description=description,
@@ -189,6 +194,31 @@ class ToolRegistry:
                 parameters={
                     "query": {"type": "str", "required": True, "description": "Search query"}
                 }
+            )
+        except ImportError:
+            pass
+
+        try:
+            from tools.expression_atlas import search_expression_atlas
+            self.register_tool(
+                name="expression_atlas",
+                description="Search EMBL-EBI Expression Atlas for gene expression experiments",
+                function=search_expression_atlas,
+                parameters={
+                    "query": {"type": "str", "required": True, "description": "Search query"},
+                    "species": {
+                        "type": "str",
+                        "required": False,
+                        "description": "Optional species filter (e.g. Homo sapiens, human)",
+                    },
+                    "interpreted_query": {
+                        "type": "dict",
+                        "required": False,
+                        "description": (
+                            "Interpreted disease/tissue/assay facets for multi-strategy search"
+                        ),
+                    },
+                },
             )
         except ImportError:
             pass

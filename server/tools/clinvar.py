@@ -3,10 +3,11 @@ ClinVar tool - get genetic variant and clinical significance information
 """
 
 import requests
-import os
 from typing import Dict, Any, List, Optional
 from bs4 import BeautifulSoup
 import xml.etree.ElementTree as ET
+
+from sciagent_server.config import build_ncbi_params
 
 
 def get_clinvar_variants(gene_symbol: str, max_results: int = 10) -> Dict[str, Any]:
@@ -31,8 +32,7 @@ def get_clinvar_variants(gene_symbol: str, max_results: int = 10) -> Dict[str, A
             "term": f"{gene_symbol}[gene]",
             "retmax": max_results,
             "retmode": "json",
-            "tool": os.getenv("PUBMED_TOOL", "sciagent_studio"),
-            "email": os.getenv("PUBMED_EMAIL", "")
+            **build_ncbi_params(),
         }
         
         search_response = requests.get(search_url, params=search_params, timeout=10)
@@ -59,8 +59,7 @@ def get_clinvar_variants(gene_symbol: str, max_results: int = 10) -> Dict[str, A
             "db": "clinvar",
             "id": ",".join(variant_ids),
             "retmode": "json",
-            "tool": os.getenv("PUBMED_TOOL", "sciagent_studio"),
-            "email": os.getenv("PUBMED_EMAIL", "")
+            **build_ncbi_params(),
         }
         
         fetch_response = requests.get(fetch_url, params=fetch_params, timeout=15)
@@ -128,8 +127,7 @@ def get_clinvar_by_variant_id(variant_id: str) -> Dict[str, Any]:
             "db": "clinvar",
             "id": variant_id,
             "retmode": "json",
-            "tool": os.getenv("PUBMED_TOOL", "sciagent_studio"),
-            "email": os.getenv("PUBMED_EMAIL", "")
+            **build_ncbi_params(),
         }
         
         response = requests.get(fetch_url, params=fetch_params, timeout=10)
@@ -183,8 +181,7 @@ def search_clinvar_by_condition(condition: str, max_results: int = 10) -> Dict[s
             "term": f"{condition}[disease]",
             "retmax": max_results,
             "retmode": "json",
-            "tool": os.getenv("PUBMED_TOOL", "sciagent_studio"),
-            "email": os.getenv("PUBMED_EMAIL", "")
+            **build_ncbi_params(),
         }
         
         search_response = requests.get(search_url, params=search_params, timeout=10)
@@ -208,8 +205,7 @@ def search_clinvar_by_condition(condition: str, max_results: int = 10) -> Dict[s
             "db": "clinvar",
             "id": ",".join(variant_ids),
             "retmode": "json",
-            "tool": os.getenv("PUBMED_TOOL", "sciagent_studio"),
-            "email": os.getenv("PUBMED_EMAIL", "")
+            **build_ncbi_params(),
         }
         
         fetch_response = requests.get(fetch_url, params=fetch_params, timeout=15)
@@ -261,8 +257,7 @@ def get_pathogenic_variants(gene_symbol: str, max_results: int = 10) -> Dict[str
             "term": f"{gene_symbol}[gene] AND (pathogenic[clinical_significance] OR likely pathogenic[clinical_significance])",
             "retmax": max_results,
             "retmode": "json",
-            "tool": os.getenv("PUBMED_TOOL", "sciagent_studio"),
-            "email": os.getenv("PUBMED_EMAIL", "")
+            **build_ncbi_params(),
         }
         
         search_response = requests.get(search_url, params=search_params, timeout=10)
@@ -286,8 +281,7 @@ def get_pathogenic_variants(gene_symbol: str, max_results: int = 10) -> Dict[str
             "db": "clinvar",
             "id": ",".join(variant_ids),
             "retmode": "json",
-            "tool": os.getenv("PUBMED_TOOL", "sciagent_studio"),
-            "email": os.getenv("PUBMED_EMAIL", "")
+            **build_ncbi_params(),
         }
         
         fetch_response = requests.get(fetch_url, params=fetch_params, timeout=15)
@@ -392,8 +386,7 @@ def search_clinvar_by_rsid(rsid: str) -> Dict[str, Any]:
             "term": f"{clean_rsid}[rsid]",
             "retmax": 10,
             "retmode": "json",
-            "tool": os.getenv("PUBMED_TOOL", "sciagent_studio"),
-            "email": os.getenv("PUBMED_EMAIL", "")
+            **build_ncbi_params(),
         }
         
         search_response = requests.get(search_url, params=search_params, timeout=10)
@@ -415,8 +408,7 @@ def search_clinvar_by_rsid(rsid: str) -> Dict[str, Any]:
             "db": "clinvar",
             "id": ",".join(variant_ids),
             "retmode": "json",
-            "tool": os.getenv("PUBMED_TOOL", "sciagent_studio"),
-            "email": os.getenv("PUBMED_EMAIL", "")
+            **build_ncbi_params(),
         }
         
         fetch_response = requests.get(fetch_url, params=fetch_params, timeout=15)
@@ -541,8 +533,7 @@ def get_variants_by_significance(gene_symbol: str, significance: str = "pathogen
             "term": f"{gene_symbol}[gene] AND {search_term}",
             "retmax": 20,
             "retmode": "json",
-            "tool": os.getenv("PUBMED_TOOL", "sciagent_studio"),
-            "email": os.getenv("PUBMED_EMAIL", "")
+            **build_ncbi_params(),
         }
         
         search_response = requests.get(search_url, params=search_params, timeout=10)
@@ -567,8 +558,7 @@ def get_variants_by_significance(gene_symbol: str, significance: str = "pathogen
             "db": "clinvar",
             "id": ",".join(variant_ids[:10]),  # Limit to first 10 for details
             "retmode": "json",
-            "tool": os.getenv("PUBMED_TOOL", "sciagent_studio"),
-            "email": os.getenv("PUBMED_EMAIL", "")
+            **build_ncbi_params(),
         }
         
         fetch_response = requests.get(fetch_url, params=fetch_params, timeout=15)

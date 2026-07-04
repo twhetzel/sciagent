@@ -86,6 +86,13 @@ def dataset_search_load_more(
 ) -> DatasetSearchLoadMoreResponse:
     from agent import dataset_discovery as pipeline
     from domain.dataset_search import DatasetCandidate, DatasetSearchCursor
+    from fastapi import HTTPException
+
+    if not registry.get_tool("geo_dataset_search"):
+        raise HTTPException(
+            status_code=403,
+            detail="Dataset discovery is disabled (geo_dataset_search is listed in SCIAGENT_EXCLUDED_SOURCES).",
+        )
 
     cursor = DatasetSearchCursor.model_validate(req.load_more_cursor)
     existing = [DatasetCandidate.model_validate(item) for item in req.candidates]

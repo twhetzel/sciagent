@@ -10,21 +10,10 @@ from .synonym_classification import (
     retrieval_terms_for_mapping,
 )
 
+from .facet_search_strategies import FACET_SEARCH_STRATEGIES as GEO_SEARCH_STRATEGIES
+from .facet_search_strategies import STRATEGY_PRIORITY
+
 _default_grounder = OntologyGrounder()
-
-GEO_SEARCH_STRATEGIES: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("strict", ("disease", "assay", "tissue")),
-    ("broad_1", ("disease", "assay")),
-    ("broad_2", ("disease", "tissue")),
-    ("broad_3", ("disease",)),
-)
-
-STRATEGY_PRIORITY = {
-    "strict": 0,
-    "broad_1": 1,
-    "broad_2": 2,
-    "broad_3": 3,
-}
 
 
 def ground_term(slot: str, term: str, top_k: int = 5) -> list[ConceptMapping]:

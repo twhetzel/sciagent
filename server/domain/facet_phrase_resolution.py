@@ -12,6 +12,7 @@ from .facet_abbreviation_resolution import (
     MIN_ABBREV_CONFIDENCE,
     QUERY_STOPWORDS,
     SLOT_FILL_ORDER,
+    curated_facet_lookup,
     ground_phrase_variants,
     mapping_matches_slot,
 )
@@ -167,8 +168,9 @@ def resolve_phrase_facets(query: str, interpreted: InterpretedQuery) -> Interpre
                 if not allow_dynamic:
                     can_use_dynamic = False
                 elif len(_phrase_words(phrase)) == 1:
-                    # Single-word dynamic lookups are noisy; rely on the curated pass instead.
-                    continue
+                    # Single-word dynamic lookups are noisy; allow curated tissue anatomy terms.
+                    if slot != "tissue" or not curated_facet_lookup(slot, phrase):
+                        continue
 
                 grounded, used_dynamic = ground_phrase_variants(
                     slot,

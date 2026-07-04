@@ -76,7 +76,10 @@ def test_score_breakdown_populated_for_full_match():
     assert breakdown is not None
     assert ranked[0].match_status == "full"
     assert breakdown.match_status == "full"
-    assert breakdown.final_score == ranked[0].score
+    assert breakdown.display_rank_score == ranked[0].score
+    assert breakdown.evidence_score <= ranked[0].score
+    assert breakdown.base_score > 0
+    assert breakdown.rank_tier == 4.0
     assert breakdown.retrieval_strategy == "strict"
     assert breakdown.disease.present is True
     assert "title" in breakdown.disease.fields

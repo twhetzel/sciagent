@@ -15,6 +15,7 @@ from domain.ontology_grounding import (
     STRATEGY_PRIORITY,
     build_geo_search_queries,
 )
+from sciagent_server.config import build_ncbi_params, get_ncbi_api_key, get_ncbi_email
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +24,11 @@ GEO_REPOSITORY = "GEO"
 DEFAULT_GEO_MAX_RESULTS = 15
 GEO_MAX_RESULTS_CAP = 200
 NCBI_REQUEST_INTERVAL_SEC = 0.34
+NCBI_REQUEST_INTERVAL_WITH_KEY_SEC = 0.11
+NCBI_MAX_RETRIES = 4
+NCBI_RETRY_BASE_SEC = 1.0
 _last_ncbi_request_at = 0.0
+_ncbi_email_warning_logged = False
 
 
 def get_geo_max_results(override: int | None = None) -> int:
@@ -40,18 +45,58 @@ def get_geo_max_results(override: int | None = None) -> int:
 
 
 def _ncbi_params() -> dict[str, str]:
-    return {
-        "tool": os.getenv("PUBMED_TOOL", "sciagent_studio"),
-        "email": os.getenv("PUBMED_EMAIL", ""),
-    }
+    return build_ncbi_params()
+
+
+def _ncbi_request_interval_sec() -> float:
+    if get_ncbi_api_key():
+        return NCBI_REQUEST_INTERVAL_WITH_KEY_SEC
+    return NCBI_REQUEST_INTERVAL_SEC
+
+
+def _warn_if_ncbi_email_missing() -> None:
+    global _ncbi_email_warning_logged
+    if _ncbi_email_warning_logged:
+        return
+    _ncbi_email_warning_logged = True
+    if not get_ncbi_email():
+        logger.warning(
+            "NCBI_EMAIL is not set; NCBI E-utilities may rate-limit requests more aggressively"
+        )
 
 
 def _throttle_ncbi_request() -> None:
     global _last_ncbi_request_at
+    _warn_if_ncbi_email_missing()
     elapsed = time.monotonic() - _last_ncbi_request_at
-    if elapsed < NCBI_REQUEST_INTERVAL_SEC:
-        time.sleep(NCBI_REQUEST_INTERVAL_SEC - elapsed)
+    interval = _ncbi_request_interval_sec()
+    if elapsed < interval:
+        time.sleep(interval - elapsed)
     _last_ncbi_request_at = time.monotonic()
+
+
+def _ncbi_get(url: str, params: dict[str, Any]) -> requests.Response:
+    """GET an NCBI E-utilities endpoint with throttling and 429 retry/backoff."""
+    merged_params = {**params, **_ncbi_params()}
+    last_response: requests.Response | None = None
+    for attempt in range(NCBI_MAX_RETRIES):
+        _throttle_ncbi_request()
+        last_response = requests.get(url, params=merged_params, timeout=15)
+        if last_response.status_code != 429:
+            last_response.raise_for_status()
+            return last_response
+        wait_sec = NCBI_RETRY_BASE_SEC * (2**attempt)
+        logger.warning(
+            "NCBI rate limited (429) for %s; retrying in %.1fs (attempt %d/%d)",
+            url.rsplit("/", 1)[-1],
+            wait_sec,
+            attempt + 1,
+            NCBI_MAX_RETRIES,
+        )
+        time.sleep(wait_sec)
+    if last_response is not None:
+        last_response.raise_for_status()
+    raise RuntimeError("NCBI request failed without a response")
 
 
 def _parse_sample_count(value: Any) -> int | None:
@@ -156,20 +201,16 @@ def _geo_esearch(
     *,
     retstart: int = 0,
 ) -> tuple[list[str], int]:
-    _throttle_ncbi_request()
-    search_response = requests.get(
+    search_response = _ncbi_get(
         f"{NCBI_BASE}esearch.fcgi",
-        params={
+        {
             "db": "gds",
             "term": search_term,
             "retmax": max(0, retmax),
             "retstart": max(0, retstart),
             "retmode": "json",
-            **_ncbi_params(),
         },
-        timeout=15,
     )
-    search_response.raise_for_status()
     search_data = search_response.json()
     id_list = search_data.get("esearchresult", {}).get("idlist", [])
     total_found = int(search_data.get("esearchresult", {}).get("count", 0))
@@ -184,18 +225,14 @@ def _geo_esummary(id_list: list[str]) -> list[dict[str, Any]]:
     chunk_size = 100
     for start in range(0, len(id_list), chunk_size):
         chunk = id_list[start : start + chunk_size]
-        _throttle_ncbi_request()
-        summary_response = requests.get(
+        summary_response = _ncbi_get(
             f"{NCBI_BASE}esummary.fcgi",
-            params={
+            {
                 "db": "gds",
                 "id": ",".join(chunk),
                 "retmode": "json",
-                **_ncbi_params(),
             },
-            timeout=15,
         )
-        summary_response.raise_for_status()
         summary_data = summary_response.json()
         result_block = summary_data.get("result", {})
 

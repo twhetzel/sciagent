@@ -7,15 +7,14 @@ import re
 from .dataset_search import InterpretedQuery
 from .facet_abbreviation_resolution import resolve_abbreviated_facets
 from .facet_phrase_resolution import resolve_phrase_facets
+from .tissue_anatomy import build_tissue_patterns
 
 DISEASE_PATTERNS = [
     (re.compile(r"ulcerative\s+colitis", re.I), "ulcerative colitis"),
+    (re.compile(r"alzheimer(?:['\u2019]s)?\s+disease", re.I), "Alzheimer disease"),
 ]
 
-TISSUE_PATTERNS = [
-    (re.compile(r"\bcolon(?:ic)?\b", re.I), "colon"),
-    (re.compile(r"large\s+intestine", re.I), "colon"),
-]
+TISSUE_PATTERNS = build_tissue_patterns()
 
 ASSAY_PATTERNS = [
     (re.compile(r"rna[\s-]?seq(?:uencing)?", re.I), "RNA-seq"),

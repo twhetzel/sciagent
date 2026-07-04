@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .assay_ranking import detect_assay_mismatch
 from .dataset_search import ConceptMapping, DatasetCandidate, EvidenceSnippet
 from .evidence_extraction import (
     build_metadata_warnings,
@@ -9,6 +10,7 @@ from .evidence_extraction import (
     detect_mouse_model_of_human_disease,
     extract_evidence_for_mapping,
 )
+from .gxa_assay import build_gxa_assay_warning
 
 
 def annotate_dataset_candidates(
@@ -61,6 +63,11 @@ def annotate_dataset_candidates(
                 )
                 evidence_snippets.extend(snippets)
             else:
+                if mapping.slot == "assay":
+                    gxa_message = build_gxa_assay_warning(fields, mapping)
+                    if gxa_message:
+                        why_partial.append(gxa_message)
+                        continue
                 if mapping.slot == "organism" and is_model:
                     why_partial.append(
                         f"{mapping.slot}: requested {mapping.label}, but structured metadata indicates Mus musculus (animal model)"
@@ -71,6 +78,12 @@ def annotate_dataset_candidates(
                     )
 
         match_status = "model" if is_model else candidate.match_status
+        assay_mapping = mapping_by_slot.get("assay")
+        assay_mismatch, _ = detect_assay_mismatch(
+            assay_mapping,
+            observed["observed_assay"],
+            accession=candidate.accession,
+        )
 
         annotated.append(
             candidate.model_copy(
@@ -78,6 +91,7 @@ def annotate_dataset_candidates(
                     "requested_concepts": list(concept_mappings),
                     "matched_concepts": matched_concepts,
                     "observed_assay": observed["observed_assay"],
+                    "assay_mismatch": assay_mismatch,
                     "observed_organism": observed["observed_organism"],
                     "observed_disease": observed["observed_disease"],
                     "observed_tissue": observed["observed_tissue"],
