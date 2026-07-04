@@ -1,4 +1,15 @@
 import { useState } from 'react'
+import DatasetActionBar from './DatasetActionBar.jsx'
+import DatasetLoadMoreSkeleton from './DatasetLoadMoreSkeleton.jsx'
+import { FacetStatusInfoTooltip, FacetStatusLabelTooltip } from './FacetStatusTooltip.jsx'
+import {
+  buildFacetSummary,
+  deriveFacetStatus,
+  FACET_STATUS_ORDER,
+  facetLabel,
+  facetStatusLabel,
+  requestedFacetSlots,
+} from '../utils/facetCoverage.js'
 
 function ConceptChip({ mapping, variant = 'matched' }) {
   const title = mapping.explanation
@@ -12,9 +23,80 @@ function ConceptChip({ mapping, variant = 'matched' }) {
   )
 }
 
+function formatMatchStatus(status) {
+  if (!status) return status
+  return status.replaceAll('_', ' ')
+}
+
+function formatCount(value) {
+  if (value == null || Number.isNaN(Number(value))) return '0'
+  return Number(value).toLocaleString()
+}
+
+function HitSummaryBanner({ datasetSearch, candidateCount, loadingMore }) {
+  const totalFound = datasetSearch.total_found ?? candidateCount
+  const primaryTotalFound = datasetSearch.primary_total_found
+  const maxResults = datasetSearch.max_results
+  const shown = datasetSearch.retrieved_count ?? candidateCount ?? 0
+  const hasMore = totalFound > shown
+  const strictDiffers =
+    primaryTotalFound != null && primaryTotalFound !== totalFound
+
+  return (
+    <div
+      className={`dataset-results-hit-summary${hasMore ? ' dataset-results-hit-summary--truncated' : ''}${loadingMore ? ' dataset-results-hit-summary--loading' : ''}`}
+      role="status"
+    >
+      <strong>
+        {loadingMore
+          ? `Loading more… (${formatCount(shown)} ranked so far)`
+          : hasMore
+            ? `Showing ${formatCount(shown)} of ${formatCount(totalFound)} GEO hits`
+            : `Showing ${formatCount(shown)} ranked ${shown === 1 ? 'hit' : 'hits'}`}
+      </strong>
+      <span>
+        {hasMore ? (
+          <>
+            Retrieved and ranked the top matches by evidence coverage
+            {strictDiffers ? (
+              <>
+                {' '}
+                ({formatCount(primaryTotalFound)} match the primary strict query)
+              </>
+            ) : null}
+            {maxResults ? (
+              <>
+                {' '}
+                · limit <code>{formatCount(maxResults)}</code>
+                {' '}
+                via <code>GEO_MAX_RESULTS</code>
+              </>
+            ) : null}
+            .
+          </>
+        ) : (
+          <>
+            All matching records retrieved from GEO were ranked below.
+            {strictDiffers ? (
+              <>
+                {' '}
+                Primary strict query: {formatCount(primaryTotalFound)} hits.
+              </>
+            ) : null}
+          </>
+        )}
+      </span>
+    </div>
+  )
+}
+
 function MatchStatusBadge({ status }) {
   if (!status) return null
-  return <span className={`dataset-match-status dataset-match-status--${status}`}>{status}</span>
+  return (
+    <span className={`dataset-match-status dataset-match-status--${status}`}>
+      {formatMatchStatus(status)}
+    </span>
+  )
 }
 
 function EvidenceList({ evidence }) {
@@ -57,11 +139,122 @@ function requestedAssay(candidate) {
   return candidate.requested_concepts?.find((mapping) => mapping.slot === 'assay')?.label
 }
 
+function FacetCoverageSummary({ candidates, mappings }) {
+  const { rows, total } = buildFacetSummary(candidates, mappings)
+
+  if (!rows.length) return null
+
+  return (
+    <div className="facet-coverage-matrix">
+      <div className="facet-coverage-matrix-header">
+        <strong>Query match summary</strong>
+        <span className="facet-coverage-matrix-note">
+          Evidence counts across {formatCount(total)} ranked{' '}
+          {total === 1 ? 'dataset' : 'datasets'}
+        </span>
+      </div>
+      <table className="facet-coverage-table facet-coverage-table--summary">
+        <thead>
+          <tr>
+            <th scope="col" className="facet-coverage-concept-header">
+              Grounded concept
+            </th>
+            {FACET_STATUS_ORDER.map((status) => (
+              <th
+                key={status}
+                scope="col"
+                className={`facet-coverage-status-header facet-coverage-status-header--${status}`}
+              >
+                <FacetStatusLabelTooltip status={status} />
+              </th>
+            ))}
+            <th scope="col" className="facet-coverage-distribution-header">
+              Distribution
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.slot}>
+              <th scope="row" className="facet-coverage-concept-label">
+                <span className="facet-coverage-concept-slot">{row.slot}</span>
+                <span className="facet-coverage-concept-name" title={row.curie || row.label}>
+                  {row.label}
+                </span>
+              </th>
+              {FACET_STATUS_ORDER.map((status) => {
+                const count = row.counts[status]
+                return (
+                  <td
+                    key={`${row.slot}-${status}`}
+                    className={`facet-coverage-count facet-coverage-count--${status}${count ? '' : ' facet-coverage-count--zero'}`}
+                  >
+                    {formatCount(count)}
+                  </td>
+                )
+              })}
+              <td className="facet-coverage-distribution">
+                <div
+                  className="facet-coverage-stack"
+                  role="img"
+                  aria-label={`${row.label} evidence distribution across ${formatCount(total)} datasets`}
+                >
+                  {FACET_STATUS_ORDER.map((status) =>
+                    row.counts[status] > 0 ? (
+                      <span
+                        key={`${row.slot}-bar-${status}`}
+                        className={`facet-coverage-stack-segment facet-coverage-stack-segment--${status}`}
+                        style={{ flexGrow: row.counts[status] }}
+                        title={`${formatCount(row.counts[status])} ${facetStatusLabel(status).toLowerCase()}`}
+                      />
+                    ) : null,
+                  )}
+                </div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function FacetCoverageStrip({ candidate, mappings }) {
+  const requestedSlots = requestedFacetSlots(
+    mappings?.length ? mappings : candidate.requested_concepts,
+  )
+  const requestedSet = new Set(requestedSlots)
+
+  if (!requestedSlots.length || !candidate.score_breakdown) return null
+
+  return (
+    <div className="facet-coverage-strip" aria-label="Facet evidence coverage">
+      {requestedSlots.map((slot) => {
+        const status = deriveFacetStatus(slot, candidate.score_breakdown, requestedSet)
+        const label = facetLabel(slot, mappings?.length ? mappings : candidate.requested_concepts)
+        return (
+          <FacetStatusInfoTooltip
+            key={slot}
+            status={status}
+            detail={`${label}: ${facetStatusLabel(status)}`}
+            className={`facet-coverage-strip-item facet-coverage-strip-item--${status}`}
+          >
+            <span className="facet-coverage-strip-trigger">
+              <span className="facet-coverage-strip-bar" aria-hidden="true" />
+              <span className="facet-coverage-strip-label">{slot}</span>
+            </span>
+          </FacetStatusInfoTooltip>
+        )
+      })}
+    </div>
+  )
+}
+
 function ScoreBreakdownPanel({ breakdown }) {
   const [expanded, setExpanded] = useState(false)
   if (!breakdown) return null
 
-  function renderSlot(label, slot) {
+  function renderSlot(label, slot, extraDetail) {
     const status = slot.present ? 'present' : 'absent'
     const fields = slot.fields?.length ? slot.fields.join(', ') : '—'
     const terms = slot.matched_terms?.length ? slot.matched_terms.join(', ') : '—'
@@ -71,8 +264,8 @@ function ScoreBreakdownPanel({ breakdown }) {
         <span className={`score-breakdown-status score-breakdown-status--${status}`}>{status}</span>
         <span className="score-breakdown-detail">fields: {fields}</span>
         <span className="score-breakdown-detail">terms: {terms}</span>
-        {label === 'tissue' && slot.evidence_type ? (
-          <span className="score-breakdown-detail">type: {slot.evidence_type}</span>
+        {extraDetail ? (
+          <span className="score-breakdown-detail">{extraDetail}</span>
         ) : null}
       </div>
     )
@@ -92,7 +285,7 @@ function ScoreBreakdownPanel({ breakdown }) {
         <div className="score-breakdown-body">
           <div className="score-breakdown-summary">
             <span>Score {breakdown.final_score?.toFixed(3)}</span>
-            <span>Status {breakdown.match_status}</span>
+            <span>Status {formatMatchStatus(breakdown.match_status)}</span>
             <span>Coverage {breakdown.evidence_coverage?.toFixed(3)}</span>
             {breakdown.retrieval_strategy ? (
               <span>Strategy {breakdown.retrieval_strategy}</span>
@@ -101,21 +294,56 @@ function ScoreBreakdownPanel({ breakdown }) {
             <span>Conflicts {breakdown.evidence_conflicts_count}</span>
           </div>
           {renderSlot('disease', breakdown.disease)}
-          {renderSlot('tissue', breakdown.tissue)}
+          {renderSlot(
+            'tissue',
+            breakdown.tissue,
+            breakdown.tissue?.evidence_type
+              ? `tissue type: ${breakdown.tissue.evidence_type.replaceAll('_', ' ')}`
+              : null,
+          )}
           {renderSlot('assay', breakdown.assay)}
-          {renderSlot('organism', breakdown.organism)}
+          {renderSlot(
+            'organism',
+            breakdown.organism,
+            breakdown.organism?.evidence_source
+              ? `source: ${breakdown.organism.evidence_source}`
+              : null,
+          )}
+          {breakdown.warnings?.length > 0 && (
+            <div className="score-breakdown-warnings">
+              <strong>Warnings</strong>
+              <ul>
+                {breakdown.warnings.map((warning) => (
+                  <li key={warning}>{warning}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {breakdown.evidence_conflicts?.length > 0 && (
+            <div className="score-breakdown-conflicts">
+              <strong>Evidence conflicts</strong>
+              <ul>
+                {breakdown.evidence_conflicts.map((conflict) => (
+                  <li key={conflict}>{conflict}</li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
       )}
     </div>
   )
 }
 
-function DatasetCard({ candidate, rank }) {
+function DatasetCard({ candidate, rank, isNew, conceptMappings }) {
   const requestedAssayLabel = requestedAssay(candidate)
   const assayMatched = candidate.matched_concepts?.some((mapping) => mapping.slot === 'assay')
 
   return (
-    <article className={`dataset-card dataset-card--${candidate.match_status || 'partial'}`}>
+    <article
+      className={`dataset-card dataset-card--${candidate.match_status || 'partial'}${isNew ? ' dataset-card--new' : ''}`}
+      data-candidate-rank={rank}
+    >
       <header className="dataset-card-header">
         <div>
           <span className="dataset-rank">#{rank}</span>
@@ -138,6 +366,8 @@ function DatasetCard({ candidate, rank }) {
       {candidate.description && (
         <p className="dataset-description">{candidate.description}</p>
       )}
+
+      <FacetCoverageStrip candidate={candidate} mappings={conceptMappings} />
 
       <div className="dataset-meta">
         {requestedAssayLabel && <span>Requested: {requestedAssayLabel}</span>}
@@ -298,7 +528,39 @@ function AgentContextPanel({ agentContext }) {
   )
 }
 
-export default function DatasetResultsPanel({ datasetSearch }) {
+function AssistantSummary({ messages, loading }) {
+  const latestUser = [...(messages || [])].reverse().find((msg) => msg.role === 'user')
+  const latestAssistant = [...(messages || [])].reverse().find((msg) => msg.role === 'assistant')
+
+  if (!latestUser && !loading) return null
+
+  return (
+    <div className="dataset-assistant-summary">
+      <strong>Agent summary</strong>
+      {latestUser ? (
+        <p className="dataset-assistant-query">
+          <span className="dataset-assistant-label">Query</span> {latestUser.content}
+        </p>
+      ) : null}
+      {loading ? (
+        <p className="dataset-assistant-response loading-pulse">Searching databases…</p>
+      ) : latestAssistant ? (
+        <p className="dataset-assistant-response">{latestAssistant.content}</p>
+      ) : null}
+    </div>
+  )
+}
+
+export default function DatasetResultsPanel({
+  datasetSearch,
+  loadingMore,
+  newFromRank,
+  listScrollRef,
+  messages,
+  loading,
+  loadMoreNotice,
+  onLoadMore,
+}) {
   if (!datasetSearch) return null
 
   const {
@@ -307,64 +569,98 @@ export default function DatasetResultsPanel({ datasetSearch }) {
     candidates,
     agent_context: agentContext,
   } = datasetSearch
+  const candidateCount = datasetSearch.retrieved_count ?? candidates?.length ?? 0
 
   return (
-    <section className="dataset-results">
-      <header className="dataset-results-header">
-        <h2>Dataset discovery</h2>
-        <p>
-          Ontology-grounded search via {datasetSearch.source || 'GEO'}
-          {datasetSearch.repository ? ` (${datasetSearch.repository})` : ''} —{' '}
-          {datasetSearch.total_found ?? candidates?.length ?? 0} total hits
-          {datasetSearch.search_term ? (
-            <>
-              {' '}
-              · primary query: <code>{datasetSearch.search_term}</code>
-            </>
-          ) : null}
-          {datasetSearch.search_strategies?.length > 0 ? (
-            <>
-              {' '}
-              · {datasetSearch.search_strategies.length} search strategies
-            </>
-          ) : null}
-        </p>
-      </header>
+    <>
+      <section className="dataset-discovery-panel" aria-label="Dataset discovery context">
+        <header className="dataset-results-header">
+          <h2>Dataset discovery</h2>
+          <p>
+            Ontology-grounded search via {datasetSearch.source || 'GEO'}
+            {datasetSearch.repository ? ` (${datasetSearch.repository})` : ''}
+            {datasetSearch.search_term ? (
+              <>
+                {' '}
+                · primary query: <code>{datasetSearch.search_term}</code>
+              </>
+            ) : null}
+            {datasetSearch.search_strategies?.length > 0 ? (
+              <>
+                {' '}
+                · {datasetSearch.search_strategies.length} search strategies
+              </>
+            ) : null}
+          </p>
+        </header>
 
-      <AgentContextPanel agentContext={agentContext} />
+        <AssistantSummary messages={messages} loading={loading} />
 
-      {interpreted && (
-        <div className="dataset-interpreted">
-          <strong>Requested facets</strong>
-          <div className="dataset-interpreted-slots">
-            {interpreted.disease && <span>disease: {interpreted.disease}</span>}
-            {interpreted.tissue && <span>tissue: {interpreted.tissue}</span>}
-            {interpreted.assay && <span>assay: {interpreted.assay}</span>}
-            {interpreted.organism && <span>organism: {interpreted.organism}</span>}
+        <HitSummaryBanner
+          datasetSearch={datasetSearch}
+          candidateCount={candidateCount}
+          loadingMore={loadingMore}
+        />
+
+        {interpreted && (
+          <div className="dataset-interpreted">
+            <strong>Requested facets</strong>
+            <div className="dataset-interpreted-slots">
+              {interpreted.disease && <span>disease: {interpreted.disease}</span>}
+              {interpreted.tissue && <span>tissue: {interpreted.tissue}</span>}
+              {interpreted.assay && <span>assay: {interpreted.assay}</span>}
+              {interpreted.organism && <span>organism: {interpreted.organism}</span>}
+            </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {mappings?.length > 0 && (
-        <div className="dataset-grounded">
-          <strong>Grounded query concepts</strong>
-          <div className="dataset-concepts">
-            {mappings.map((mapping) => (
-              <ConceptChip key={mapping.curie} mapping={mapping} variant="requested" />
+        {mappings?.length > 0 && (
+          <div className="dataset-grounded">
+            <strong>Grounded query concepts</strong>
+            <div className="dataset-concepts">
+              {mappings.map((mapping) => (
+                <ConceptChip key={mapping.curie} mapping={mapping} variant="requested" />
+              ))}
+            </div>
+          </div>
+        )}
+
+        <FacetCoverageSummary candidates={candidates} mappings={mappings} />
+
+        <AgentContextPanel agentContext={agentContext} />
+      </section>
+
+      <DatasetActionBar
+        datasetSearch={datasetSearch}
+        loadingMore={loadingMore}
+        loadMoreNotice={loadMoreNotice}
+        onLoadMore={onLoadMore}
+      />
+
+      <section className="dataset-results-list-section" aria-label="Ranked datasets">
+        <div className="dataset-list-header">
+          <strong>Ranked datasets</strong>
+          <span>{candidateCount} retrieved</span>
+        </div>
+        <div className="dataset-results-list-pane" ref={listScrollRef}>
+          <div className="dataset-list">
+            {(candidates || []).map((candidate, index) => (
+              <DatasetCard
+                key={candidate.accession}
+                candidate={candidate}
+                rank={index + 1}
+                isNew={newFromRank != null && index + 1 >= newFromRank}
+                conceptMappings={mappings}
+              />
             ))}
+            {loadingMore ? <DatasetLoadMoreSkeleton count={2} /> : null}
           </div>
+
+          {(!candidates || candidates.length === 0) && !loadingMore && (
+            <p className="dataset-empty">No ranked dataset candidates returned.</p>
+          )}
         </div>
-      )}
-
-      <div className="dataset-list">
-        {(candidates || []).map((candidate, index) => (
-          <DatasetCard key={candidate.accession} candidate={candidate} rank={index + 1} />
-        ))}
-      </div>
-
-      {(!candidates || candidates.length === 0) && (
-        <p className="dataset-empty">No ranked dataset candidates returned.</p>
-      )}
-    </section>
+      </section>
+    </>
   )
 }

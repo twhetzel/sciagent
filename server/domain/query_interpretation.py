@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 
 from .dataset_search import InterpretedQuery
+from .facet_abbreviation_resolution import resolve_abbreviated_facets
+from .facet_phrase_resolution import resolve_phrase_facets
 
 DISEASE_PATTERNS = [
     (re.compile(r"ulcerative\s+colitis", re.I), "ulcerative colitis"),
@@ -44,12 +46,14 @@ def interpret_dataset_query(query: str) -> InterpretedQuery:
     if organism is None and (disease or tissue):
         organism = "human"
 
-    return InterpretedQuery(
+    interpreted = InterpretedQuery(
         disease=disease,
         tissue=tissue,
         assay=assay,
         organism=organism,
     )
+    interpreted = resolve_abbreviated_facets(query, interpreted)
+    return resolve_phrase_facets(query, interpreted)
 
 
 def is_dataset_discovery_query(query: str) -> bool:

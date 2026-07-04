@@ -229,11 +229,14 @@ def detect_evidence_conflicts(
     all_concrete: set[str] = set()
     for assays in by_field.values():
         all_concrete.update(assay for assay in assays if assay != "occupancy")
-    if len(all_concrete) > 1:
-        conflicts.append(
-            "Multiple assay types detected across metadata fields: "
-            f"{', '.join(sorted(all_concrete))}."
-        )
+    if len(all_concrete) > 1 and assay_mapping:
+        requested = _normalize_text(assay_mapping.label)
+        requested_present = any(_normalize_text(assay) == requested for assay in all_concrete)
+        if not requested_present:
+            conflicts.append(
+                "Multiple assay types detected across metadata fields: "
+                f"{', '.join(sorted(all_concrete))}."
+            )
 
     return conflicts
 
@@ -246,12 +249,21 @@ def build_metadata_warnings(
     """User-facing warnings about ambiguity or disagreement in repository metadata."""
     warnings = list(detect_evidence_conflicts(fields, mapping_by_slot))
 
+    by_field = detect_assays_by_field(fields)
+    all_concrete: set[str] = set()
+    for assays in by_field.values():
+        all_concrete.update(assay for assay in assays if assay != "occupancy")
+    if len(all_concrete) > 1:
+        warnings.append(
+            "Multiple assay types detected across metadata fields: "
+            f"{', '.join(sorted(all_concrete))}."
+        )
+
     if observed_assay == MIXED_ASSAY_LABEL:
         warnings.append(
             "Metadata appears to include multiple assay types; labeled as mixed or multi-assay."
         )
 
-    by_field = detect_assays_by_field(fields)
     assay_mapping = mapping_by_slot.get("assay")
     if assay_mapping:
         has_assay_evidence = bool(_assay_evidence_fields(fields, assay_mapping))
@@ -481,10 +493,10 @@ def extract_tissue_evidence_details(
 
     direct_fields = {"title", "summary"}
     if matched_fields and not any(field in direct_fields for field in matched_fields):
-        return present, matched_fields, matched_terms, "inferred"
+        return present, matched_fields, matched_terms, "ambiguous"
 
     if _tissue_match_is_contextual_only(mapping, fields, matched_fields):
-        return present, matched_fields, matched_terms, "inferred"
+        return present, matched_fields, matched_terms, "ambiguous"
 
     return present, matched_fields, matched_terms, "direct"
 
@@ -515,14 +527,19 @@ def extract_assay_evidence_details(
 def extract_organism_evidence_details(
     mapping: ConceptMapping | None,
     fields: dict[str, str],
-) -> tuple[bool, list[str], list[str]]:
+) -> tuple[bool, list[str], list[str], str]:
     if not mapping:
-        return False, [], []
+        return False, [], [], "absent"
 
     supported, observed, evidence_field = organism_supported_by_evidence(fields, mapping)
     if not supported or not evidence_field:
-        return False, [], []
+        return False, [], [], "absent"
 
+    evidence_source = (
+        "structured"
+        if evidence_field in STRUCTURED_ORGANISM_FIELDS
+        else "narrative"
+    )
     text = fields.get(evidence_field, "")
     matched_terms = sorted(
         {
@@ -533,7 +550,7 @@ def extract_organism_evidence_details(
     )
     if observed:
         matched_terms = sorted(set(matched_terms) | {_normalize_text(observed)})
-    return True, [evidence_field], matched_terms
+    return True, [evidence_field], matched_terms, evidence_source
 
 
 def detect_observed_disease(fields: dict[str, str], mapping: ConceptMapping | None) -> str | None:

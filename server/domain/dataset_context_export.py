@@ -74,10 +74,22 @@ def build_downstream_cautions(result: DatasetSearchResult) -> list[str]:
         )
         return cautions
 
-    partial_count = sum(1 for c in result.candidates if c.match_status == "partial")
+    partial_count = sum(
+        1 for c in result.candidates if c.match_status in {"partial", "ambiguous_or_mixed"}
+    )
     if partial_count:
         cautions.append(
-            f"{partial_count} ranked candidate(s) are partial matches; confirm unsupported facets in sample metadata."
+            f"{partial_count} ranked candidate(s) are partial or ambiguous matches; "
+            "confirm unsupported or mixed facets in sample metadata."
+        )
+
+    warning_count = sum(
+        1 for c in result.candidates if c.match_status == "full_with_warnings"
+    )
+    if warning_count:
+        cautions.append(
+            f"{warning_count} ranked candidate(s) are full matches with metadata warnings "
+            "or conflicts; review before downstream use."
         )
 
     if any(c.evidence_conflicts for c in result.candidates):
@@ -98,14 +110,17 @@ def build_downstream_cautions(result: DatasetSearchResult) -> list[str]:
             "Requested assay was not supported by metadata evidence for at least one ranked dataset."
         )
 
-    if any(c.match_status == "model" for c in result.candidates):
+    if any(c.match_status == "ambiguous_or_mixed" for c in result.candidates):
         cautions.append(
-            "Some ranked datasets are animal model studies; do not treat them as direct human clinical data."
+            "Some ranked datasets are ambiguous or mixed (animal models, organoids, or multi-assay); "
+            "do not treat them as direct human clinical data without review."
         )
 
     if result.total_found > len(result.candidates):
+        limit = result.max_results or len(result.candidates)
         cautions.append(
-            f"Only {len(result.candidates)} of {result.total_found} repository hits were ranked; additional candidates may exist."
+            f"Showing {len(result.candidates)} of {result.total_found:,} GEO hits "
+            f"(retrieved and ranked up to {limit}); additional candidates may exist."
         )
 
     return cautions
@@ -130,6 +145,10 @@ def export_dataset_search_json(result: DatasetSearchResult) -> dict[str, Any]:
             "search_term": result.search_term,
             "search_strategies": result.search_strategies,
             "total_found": result.total_found,
+            "primary_total_found": result.primary_total_found,
+            "max_results": result.max_results,
+            "retrieved_count": result.retrieved_count,
+            "has_more": result.has_more,
             "ranked_count": len(result.candidates),
         },
         "downstream_cautions": build_downstream_cautions(result),
@@ -219,7 +238,17 @@ def _format_candidate_markdown(candidate: DatasetCandidate, rank: int) -> str:
             line = f"  - {slot}: {status}; fields: {fields}; terms: {terms}"
             if slot == "tissue" and hasattr(slot_breakdown, "evidence_type"):
                 line += f"; tissue type: {slot_breakdown.evidence_type}"
+            if slot == "organism" and hasattr(slot_breakdown, "evidence_source"):
+                line += f"; source: {slot_breakdown.evidence_source}"
             lines.append(line)
+        if breakdown.warnings:
+            lines.append("  - warnings:")
+            for warning in breakdown.warnings:
+                lines.append(f"    - {warning}")
+        if breakdown.evidence_conflicts:
+            lines.append("  - evidence conflicts:")
+            for conflict in breakdown.evidence_conflicts:
+                lines.append(f"    - {conflict}")
 
     if candidate.evidence_snippets:
         lines.append("- **Evidence snippets**:")
@@ -274,8 +303,21 @@ def export_dataset_search_markdown(result: DatasetSearchResult) -> str:
                 f"  - {item.get('strategy')}: `{item.get('search_term')}` "
                 f"({item.get('total_found', 0)} hits, retrieved {item.get('retrieved', 0)})"
             )
-    lines.append(f"- **Total repository hits**: {result.total_found}")
-    lines.append(f"- **Ranked candidates**: {len(result.candidates)}")
+    lines.append(f"- **Total repository hits**: {result.total_found:,}")
+    if (
+        result.primary_total_found is not None
+        and result.primary_total_found != result.total_found
+    ):
+        lines.append(
+            f"- **Primary strict strategy hits**: {result.primary_total_found:,}"
+        )
+    if result.max_results is not None:
+        lines.append(f"- **Retrieval limit**: {result.max_results} (GEO_MAX_RESULTS)")
+    lines.append(f"- **Ranked candidates shown**: {len(result.candidates)}")
+    if result.retrieved_count:
+        lines.append(f"- **Retrieved so far**: {result.retrieved_count}")
+    if result.has_more:
+        lines.append("- **More results available**: yes (use Load more in the UI)")
     lines.append("")
 
     cautions = build_downstream_cautions(result)

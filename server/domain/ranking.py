@@ -37,20 +37,16 @@ def rank_annotated_candidates(
         evidence_coverage = covered / len(expected_slots) if expected_slots else 0.0
         score = slot_score + (SLOT_WEIGHTS["evidence_coverage"] * evidence_coverage)
 
-        if candidate.match_status == "model":
-            match_status = "model"
-        elif covered == len(expected_slots) and expected_slots:
-            match_status = "full"
-        else:
-            match_status = "partial"
-
         score_breakdown = build_score_breakdown(
             candidate,
             concept_mappings,
             score=score,
-            match_status=match_status,
             evidence_coverage=evidence_coverage,
+            expected_slot_count=len(expected_slots),
+            covered_slot_count=covered,
         )
+        match_status = score_breakdown.match_status
+
         ranked.append(
             candidate.model_copy(
                 update={

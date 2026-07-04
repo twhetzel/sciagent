@@ -44,7 +44,7 @@ def annotate_dataset_candidates(
         evidence_conflicts = [
             warning
             for warning in metadata_warnings
-            if "conflict" in warning.lower() or "Multiple assay" in warning
+            if "conflict" in warning.lower()
         ]
 
         matched_concepts: list[ConceptMapping] = []

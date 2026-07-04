@@ -103,7 +103,11 @@ class AgentOrchestrator:
                 },
             )
 
-            search_result = pipeline.search_repository(concept_mappings)
+            search_result = pipeline.search_repository(
+                concept_mappings,
+                query=query,
+                interpreted_query=interpreted,
+            )
             self.tracer.log_step(
                 "search_repository",
                 {
@@ -113,6 +117,9 @@ class AgentOrchestrator:
                     "search_term": search_result.get("search_term", ""),
                     "search_strategies": search_result.get("search_strategies", []),
                     "total_found": search_result.get("total_found", 0),
+                    "primary_total_found": search_result.get("primary_total_found"),
+                    "max_results": search_result.get("max_results"),
+                    "has_more": search_result.get("has_more", False),
                     "record_count": len(search_result.get("records", [])),
                     "source": search_result.get("source", "NCBI GEO"),
                     "error": search_result.get("error"),
@@ -152,13 +159,18 @@ class AgentOrchestrator:
                     "description": "Score candidates by evidence coverage; do not inherit requested facets without evidence",
                     "candidate_count": len(ranked),
                     "full_matches": sum(1 for c in ranked if c.match_status == "full"),
+                    "full_with_warnings_matches": sum(
+                        1 for c in ranked if c.match_status == "full_with_warnings"
+                    ),
                     "partial_matches": sum(1 for c in ranked if c.match_status == "partial"),
+                    "ambiguous_or_mixed_matches": sum(
+                        1 for c in ranked if c.match_status == "ambiguous_or_mixed"
+                    ),
                     "top_accessions": [c.accession for c in ranked[:5]],
                 },
             )
 
-            from domain.dataset_context_export import export_dataset_search_agent_context
-            from domain.dataset_search import DatasetSearchResult
+            from domain.dataset_search import DatasetSearchCursor, DatasetSearchResult
 
             result = DatasetSearchResult(
                 query=query,
@@ -166,13 +178,21 @@ class AgentOrchestrator:
                 concept_mappings=concept_mappings,
                 candidates=ranked,
                 total_found=search_result.get("total_found", len(ranked)),
+                primary_total_found=search_result.get("primary_total_found"),
+                max_results=search_result.get("max_results"),
                 source=search_result.get("source", "NCBI GEO"),
                 repository=search_result.get("repository", "GEO"),
                 search_term=search_result.get("search_term") or None,
                 search_strategies=search_result.get("search_strategies", []),
+                has_more=search_result.get("has_more", False),
+                retrieved_count=len(ranked),
+                load_more_cursor=(
+                    DatasetSearchCursor.model_validate(search_result["load_more_cursor"])
+                    if search_result.get("load_more_cursor")
+                    else None
+                ),
             )
-            result_payload = result.model_dump()
-            result_payload["agent_context"] = export_dataset_search_agent_context(result)
+            result_payload = pipeline.dataset_search_result_payload(result)
             final_response = self._format_dataset_search_response(result)
 
             self.tracer.log_step(
@@ -681,62 +701,29 @@ class AgentOrchestrator:
         return f"{index}. **{label}**: {data}\n\n"
 
     def _format_dataset_search_response(self, result) -> str:
-        """Format ontology-grounded dataset discovery results for chat."""
-        interpreted = result.interpreted_query
-        slots = []
-        if interpreted.disease:
-            slots.append(f"disease={interpreted.disease}")
-        if interpreted.tissue:
-            slots.append(f"tissue={interpreted.tissue}")
-        if interpreted.assay:
-            slots.append(f"assay={interpreted.assay}")
-        if interpreted.organism:
-            slots.append(f"organism={interpreted.organism}")
-
-        response = f"Based on your query '{result.query}', I searched {result.source} using grounded ontology concepts.\n\n"
-        response += f"**Interpreted query**: {', '.join(slots) if slots else 'no structured slots extracted'}\n\n"
-
-        if result.concept_mappings:
-            response += "**Grounded concepts**:\n"
-            for mapping in result.concept_mappings:
-                response += f"- {mapping.slot}: {mapping.label} ({mapping.curie})\n"
-            response += "\n"
-
+        """Brief chat summary; full details live in the structured dataset_search payload."""
         if not result.candidates:
             if result.total_found:
-                response += (
+                return (
                     f"GEO search found {result.total_found} potential matches, "
                     "but record retrieval failed or returned no usable metadata. "
-                    "Try again in a moment or set PUBMED_EMAIL for NCBI rate limits.\n"
+                    "See details below, or try again after setting PUBMED_EMAIL for NCBI rate limits."
                 )
-            else:
-                response += f"No matching datasets were found ({result.total_found} raw GEO hits).\n"
-            return response
+            return f"No matching datasets were found ({result.total_found} raw GEO hits). See details below."
 
-        response += f"**Top ranked datasets** ({len(result.candidates)} shown, {result.total_found} total GEO hits):\n\n"
-        for index, candidate in enumerate(result.candidates[:5], 1):
-            response += f"{index}. **{candidate.accession}** — {candidate.title}\n"
-            response += f"   Repository: {candidate.repository}\n"
-            response += f"   Match: {candidate.match_status} (score {candidate.score:.2f})\n"
-            requested_assay = next(
-                (m.label for m in candidate.requested_concepts if m.slot == "assay"),
-                None,
+        count = len(result.candidates)
+        dataset_word = "dataset" if count == 1 else "datasets"
+        total = result.total_found or count
+        if total > count:
+            limit_note = ""
+            if result.max_results:
+                limit_note = f" (GEO_MAX_RESULTS={result.max_results})"
+            return (
+                f"Showing {count} of {total:,} GEO hits{limit_note} — "
+                f"{count} ranked {dataset_word} by evidence. "
+                "See ranked results below for match status and export context."
             )
-            if requested_assay:
-                response += f"   Requested assay: {requested_assay}\n"
-            if candidate.observed_assay:
-                response += f"   Observed assay: {candidate.observed_assay}\n"
-            if candidate.why_matched:
-                response += f"   Supported by evidence: {'; '.join(candidate.why_matched)}\n"
-            if candidate.why_partial:
-                response += f"   Why partial: {'; '.join(candidate.why_partial)}\n"
-            if candidate.metadata_warnings:
-                response += f"   Metadata warnings: {'; '.join(candidate.metadata_warnings)}\n"
-            if candidate.url:
-                response += f"   URL: {candidate.url}\n"
-            response += "\n"
-
-        if len(result.candidates) > 5:
-            response += f"... and {len(result.candidates) - 5} more ranked datasets (see structured results below).\n"
-
-        return response
+        return (
+            f"Found {count} ranked {dataset_word} from {result.source}. "
+            "See ranked results below for evidence, match status, and export context."
+        )

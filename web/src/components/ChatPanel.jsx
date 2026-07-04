@@ -1,5 +1,3 @@
-import { useState } from 'react'
-
 function renderResponse(text) {
   if (!text) return null
   return text.split('\n').map((line, i) => {
@@ -28,26 +26,15 @@ function renderResponse(text) {
   })
 }
 
-export default function ChatPanel({ onSubmit, loading, messages }) {
-  const [query, setQuery] = useState('')
-
-  function handleSubmit(event) {
-    event.preventDefault()
-    const trimmed = query.trim()
-    if (!trimmed || loading) return
-    onSubmit(trimmed)
-    setQuery('')
-  }
+export default function ChatPanel({ loading, messages, compact = false }) {
+  const visibleMessages =
+    compact && messages.length > 2 ? messages.slice(-2) : messages
 
   return (
-    <section className="chat-panel">
-      <header className="chat-header">
-        <div>
-          <h1>SciAgent Studio</h1>
-          <p>Multi-database scientific search with transparent execution tracing</p>
-        </div>
-      </header>
-
+    <section className={`chat-panel${compact ? ' chat-panel--compact' : ''}`}>
+      {compact && messages.length > 0 ? (
+        <div className="chat-panel-compact-label">Latest query</div>
+      ) : null}
       <div className="chat-messages">
         {messages.length === 0 && (
           <div className="chat-empty">
@@ -66,11 +53,16 @@ export default function ChatPanel({ onSubmit, loading, messages }) {
           </div>
         )}
 
-        {messages.map((msg, index) => (
-          <div key={index} className={`message message--${msg.role}`}>
-            <div className="message-label">{msg.role === 'user' ? 'You' : 'SciAgent Studio'}</div>
-            <div className="message-body">
-              {msg.role === 'assistant' ? renderResponse(msg.content) : msg.content}
+        {visibleMessages.map((msg, index) => (
+          <div key={`${index}-${msg.role}-${msg.content.slice(0, 24)}`}>
+            {msg.role === 'user' && index > 0 && !compact && (
+              <hr className="chat-turn-divider" aria-hidden="true" />
+            )}
+            <div className={`message message--${msg.role}`}>
+              <div className="message-label">{msg.role === 'user' ? 'You' : 'SciAgent Studio'}</div>
+              <div className="message-body">
+                {msg.role === 'assistant' ? renderResponse(msg.content) : msg.content}
+              </div>
             </div>
           </div>
         ))}
@@ -82,19 +74,6 @@ export default function ChatPanel({ onSubmit, loading, messages }) {
           </div>
         )}
       </div>
-
-      <form className="chat-form" onSubmit={handleSubmit}>
-        <textarea
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Enter your scientific query…"
-          rows={3}
-          disabled={loading}
-        />
-        <button type="submit" disabled={loading || !query.trim()}>
-          {loading ? 'Running…' : 'Run query'}
-        </button>
-      </form>
     </section>
   )
 }

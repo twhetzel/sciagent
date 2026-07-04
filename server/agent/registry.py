@@ -208,7 +208,10 @@ class ToolRegistry:
                     "max_results": {
                         "type": "int",
                         "required": False,
-                        "description": "Maximum GEO records to retrieve",
+                        "description": (
+                            "Maximum GEO records to retrieve and rank "
+                            "(defaults to GEO_MAX_RESULTS env or 15)"
+                        ),
                     },
                 },
             )

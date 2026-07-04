@@ -47,3 +47,10 @@ export async function postQuery(query) {
     body: JSON.stringify({ query }),
   });
 }
+
+export async function postDatasetSearchMore({ load_more_cursor, candidates }) {
+  return request('/api/dataset-search/more', {
+    method: 'POST',
+    body: JSON.stringify({ load_more_cursor, candidates }),
+  });
+}

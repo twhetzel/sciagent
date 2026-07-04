@@ -17,6 +17,22 @@ SEED_CONCEPTS: dict[str, dict] = {
         "iri": "http://purl.obolibrary.org/obo/MONDO_0005101",
         "synonyms": ["ulcerative colitis", "UC", "colitis ulcerative"],
     },
+    "Crohn's disease": {
+        "slot": "disease",
+        "curie": "MONDO:0005011",
+        "label": "Crohn's disease",
+        "ontology": "MONDO",
+        "iri": "http://purl.obolibrary.org/obo/MONDO_0005011",
+        "synonyms": ["Crohn's disease", "Crohn disease", "Crohns disease", "regional enteritis"],
+    },
+    "Parkinson's disease": {
+        "slot": "disease",
+        "curie": "MONDO:0005180",
+        "label": "Parkinson's disease",
+        "ontology": "MONDO",
+        "iri": "http://purl.obolibrary.org/obo/MONDO_0005180",
+        "synonyms": ["Parkinson's disease", "Parkinson disease", "Parkinsons disease"],
+    },
     "colon": {
         "slot": "tissue",
         "curie": "UBERON:0001155",
@@ -24,6 +40,14 @@ SEED_CONCEPTS: dict[str, dict] = {
         "ontology": "UBERON",
         "iri": "http://purl.obolibrary.org/obo/UBERON_0001155",
         "synonyms": ["colon", "colonic", "large intestine", "large bowel"],
+    },
+    "ileum": {
+        "slot": "tissue",
+        "curie": "UBERON:0000167",
+        "label": "ileum",
+        "ontology": "UBERON",
+        "iri": "http://purl.obolibrary.org/obo/UBERON_0000167",
+        "synonyms": ["ileum", "ileal"],
     },
     "RNA-seq": {
         "slot": "assay",

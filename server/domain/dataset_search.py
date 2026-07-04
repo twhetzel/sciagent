@@ -33,11 +33,20 @@ class SlotEvidenceBreakdown(BaseModel):
 
 
 class TissueEvidenceBreakdown(SlotEvidenceBreakdown):
-    """Tissue evidence with direct vs model-derived vs inferred classification."""
+    """Tissue evidence with direct vs model-derived vs ambiguous classification."""
 
     evidence_type: str = Field(
         default="absent",
-        description="direct, derived_model, inferred, or absent",
+        description="direct, derived_model, ambiguous, or absent",
+    )
+
+
+class OrganismEvidenceBreakdown(SlotEvidenceBreakdown):
+    """Organism evidence with structured taxon vs narrative metadata classification."""
+
+    evidence_source: str = Field(
+        default="absent",
+        description="structured, narrative, or absent",
     )
 
 
@@ -47,7 +56,9 @@ class ScoreBreakdown(BaseModel):
     disease: SlotEvidenceBreakdown = Field(default_factory=SlotEvidenceBreakdown)
     tissue: TissueEvidenceBreakdown = Field(default_factory=TissueEvidenceBreakdown)
     assay: SlotEvidenceBreakdown = Field(default_factory=SlotEvidenceBreakdown)
-    organism: SlotEvidenceBreakdown = Field(default_factory=SlotEvidenceBreakdown)
+    organism: OrganismEvidenceBreakdown = Field(default_factory=OrganismEvidenceBreakdown)
+    warnings: list[str] = Field(default_factory=list)
+    evidence_conflicts: list[str] = Field(default_factory=list)
     warnings_count: int = 0
     evidence_conflicts_count: int = 0
     retrieval_strategy: str | None = None
@@ -125,7 +136,10 @@ class DatasetCandidate(BaseModel):
     score: float = 0.0
     match_status: str = Field(
         default="partial",
-        description="full, partial, or model based on evidence coverage",
+        description=(
+            "full, full_with_warnings, partial, or ambiguous_or_mixed "
+            "based on evidence coverage and quality signals"
+        ),
     )
     retrieval_strategy: str | None = Field(
         default=None,
@@ -145,6 +159,29 @@ class DatasetCandidate(BaseModel):
     )
 
 
+class DatasetSearchCursor(BaseModel):
+    """State for fetching the next GEO batch without re-running grounding."""
+
+    query: str
+    interpreted_query: InterpretedQuery
+    concept_mappings: list[ConceptMapping] = Field(default_factory=list)
+    strategy_offsets: dict[str, int] = Field(default_factory=dict)
+    strategy_totals: dict[str, int] = Field(default_factory=dict)
+    seen_ids: list[str] = Field(
+        default_factory=list,
+        description="GEO GDS UIDs already retrieved",
+    )
+    seen_accessions: list[str] = Field(
+        default_factory=list,
+        description="Repository accessions already ranked",
+    )
+    total_found: int = 0
+    primary_total_found: int | None = None
+    max_results: int = 15
+    search_term: str | None = None
+    has_more: bool = False
+
+
 class DatasetSearchResult(BaseModel):
     """End-to-end dataset discovery response."""
 
@@ -153,6 +190,14 @@ class DatasetSearchResult(BaseModel):
     concept_mappings: list[ConceptMapping] = Field(default_factory=list)
     candidates: list[DatasetCandidate] = Field(default_factory=list)
     total_found: int = 0
+    primary_total_found: int | None = Field(
+        default=None,
+        description="Hit count for the primary strict search strategy",
+    )
+    max_results: int | None = Field(
+        default=None,
+        description="Configured GEO retrieval/ranking limit for this search",
+    )
     source: str = "NCBI GEO"
     repository: str = Field(default="GEO", description="Repository identifier searched")
     search_term: str | None = Field(
@@ -162,4 +207,10 @@ class DatasetSearchResult(BaseModel):
     search_strategies: list[dict[str, str | int]] = Field(
         default_factory=list,
         description="Multi-query retrieval strategies and hit counts",
+    )
+    has_more: bool = False
+    retrieved_count: int = 0
+    load_more_cursor: DatasetSearchCursor | None = Field(
+        default=None,
+        description="Opaque cursor for POST /api/dataset-search/more",
     )
