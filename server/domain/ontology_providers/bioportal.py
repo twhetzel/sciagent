@@ -69,6 +69,7 @@ class BioPortalProvider:
             if not curie:
                 continue
 
+            synonyms, synonym_scopes = _extract_bioportal_synonym_data(item)
             candidates.append(
                 ConceptMapping(
                     slot=slot,
@@ -77,7 +78,8 @@ class BioPortalProvider:
                     label=item.get("prefLabel", ""),
                     ontology=ontology.upper() if ontology else "",
                     iri=item.get("@id"),
-                    synonyms=_extract_bioportal_synonyms(item),
+                    synonyms=synonyms,
+                    synonym_scopes=synonym_scopes,
                     match_type=match_type,
                     source=self.name,
                     confidence=CONFIDENCE_BY_MATCH[match_type],
@@ -125,9 +127,27 @@ def _extract_bioportal_ontology(item: dict[str, Any]) -> str:
     return ""
 
 
-def _extract_bioportal_synonyms(item: dict[str, Any]) -> list[str]:
-    synonyms = [str(value) for value in (item.get("synonym") or []) if value]
+def _extract_bioportal_synonym_data(item: dict[str, Any]) -> tuple[list[str], dict[str, str]]:
+    """Return synonym strings and scope metadata (BioPortal search is mostly untyped)."""
+    scopes: dict[str, str] = {}
+    synonyms: list[str] = []
+
     pref_label = item.get("prefLabel")
     if pref_label:
-        synonyms.append(str(pref_label))
-    return sorted(set(synonyms))
+        label_text = str(pref_label)
+        synonyms.append(label_text)
+        scopes[_normalize_text(label_text)] = "label"
+
+    for value in item.get("synonym") or []:
+        if not value:
+            continue
+        term = str(value)
+        synonyms.append(term)
+        scopes.setdefault(_normalize_text(term), "exact")
+
+    return sorted(set(synonyms)), scopes
+
+
+def _extract_bioportal_synonyms(item: dict[str, Any]) -> list[str]:
+    synonyms, _ = _extract_bioportal_synonym_data(item)
+    return synonyms

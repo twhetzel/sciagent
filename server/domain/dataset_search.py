@@ -12,7 +12,10 @@ class SynonymAlias(BaseModel):
     source: str
     category: str = Field(
         ...,
-        description="preferred_label, exact_synonym, related_synonym, acronym, or abbreviation",
+        description=(
+            "preferred_label, exact_synonym, dataset_phrase, broad_synonym, "
+            "related_synonym, acronym, or abbreviation"
+        ),
     )
     safe_for_retrieval: bool = Field(
         ...,
@@ -88,6 +91,13 @@ class ConceptMapping(BaseModel):
     ontology: str = Field(..., description="Ontology prefix, e.g. MONDO")
     iri: str | None = Field(default=None, description="Ontology term IRI when available")
     synonyms: list[str] = Field(default_factory=list, description="Search synonyms")
+    synonym_scopes: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Normalized synonym text to ontology scope "
+            "(label, exact, broad, related, dataset) from OLS/BioPortal/curated"
+        ),
+    )
     aliases: list[SynonymAlias] = Field(
         default_factory=list,
         description="Classified synonym metadata for retrieval and evidence",

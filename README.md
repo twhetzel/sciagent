@@ -126,6 +126,18 @@ Interpretation runs in three layers:
 
 Abbreviations are resolved for **understanding** but excluded from **GEO query strings** when they are ambiguous (e.g. `UC` is never sent to NCBI; `ulcerative colitis` is).
 
+**Synonym tiers (retrieval vs evidence)**
+
+| Source | Used in GEO primary query | Used in evidence matching |
+|--------|---------------------------|---------------------------|
+| Preferred label | Yes | Yes |
+| OLS/BioPortal exact synonyms | Yes | Yes |
+| Curated dataset phrases (e.g. `colonic`, `RNA-seq`) | Yes | Yes |
+| OLS broad / related synonyms (e.g. `hindgut` for colon) | No | Yes |
+| Contextual acronyms (`UC`, `PD`, …) | No | Yes, with supporting context |
+
+Related ontology synonyms can support ranking and evidence snippets but do not automatically broaden the primary repository search.
+
 **What works well**
 
 | Query shape | Example | Notes |

@@ -58,6 +58,7 @@ class OLSProvider:
             if not curie:
                 continue
 
+            synonyms, synonym_scopes = _extract_ols_synonym_data(doc)
             candidates.append(
                 ConceptMapping(
                     slot=slot,
@@ -66,7 +67,8 @@ class OLSProvider:
                     label=doc.get("label", ""),
                     ontology=str(doc.get("ontology_name", "")).upper(),
                     iri=doc.get("iri"),
-                    synonyms=_extract_ols_synonyms(doc),
+                    synonyms=synonyms,
+                    synonym_scopes=synonym_scopes,
                     match_type=match_type,
                     source=self.name,
                     confidence=CONFIDENCE_BY_MATCH[match_type],
@@ -92,13 +94,47 @@ def _match_ols_doc(term: str, doc: dict[str, Any]) -> str | None:
     return None
 
 
-def _extract_ols_synonyms(doc: dict[str, Any]) -> list[str]:
+def _extract_ols_synonym_data(doc: dict[str, Any]) -> tuple[list[str], dict[str, str]]:
+    """Return all synonym strings and normalized-term → OLS scope metadata."""
+    scope_by_field = {
+        "exact_synonyms": "exact",
+        "broad_synonyms": "broad",
+        "related_synonyms": "related",
+    }
+    scopes: dict[str, str] = {}
     synonyms: list[str] = []
-    for field in ("exact_synonyms", "broad_synonyms", "related_synonyms", "synonyms"):
-        values = doc.get(field) or []
-        if isinstance(values, list):
-            synonyms.extend(str(value) for value in values if value)
+
     label = doc.get("label")
     if label:
-        synonyms.append(str(label))
-    return sorted(set(synonyms))
+        label_text = str(label)
+        synonyms.append(label_text)
+        scopes[_normalize_text(label_text)] = "label"
+
+    for field, scope in scope_by_field.items():
+        values = doc.get(field) or []
+        if not isinstance(values, list):
+            continue
+        for value in values:
+            if not value:
+                continue
+            term = str(value)
+            synonyms.append(term)
+            scopes[_normalize_text(term)] = scope
+
+    legacy_values = doc.get("synonyms") or []
+    if isinstance(legacy_values, list):
+        for value in legacy_values:
+            if not value:
+                continue
+            term = str(value)
+            key = _normalize_text(term)
+            synonyms.append(term)
+            if key not in scopes:
+                scopes[key] = "exact"
+
+    return sorted(set(synonyms)), scopes
+
+
+def _extract_ols_synonyms(doc: dict[str, Any]) -> list[str]:
+    synonyms, _ = _extract_ols_synonym_data(doc)
+    return synonyms

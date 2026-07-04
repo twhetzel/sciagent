@@ -49,6 +49,21 @@ def _is_acronym_like(term: str) -> bool:
     return alpha.isupper() and len(alpha) <= 4
 
 
+def _category_from_ontology_scope(scope: str, term: str, label: str) -> str:
+    """Map provider synonym scope to alias category."""
+    if scope == "label":
+        return "preferred_label"
+    if scope == "exact":
+        return "exact_synonym"
+    if scope == "dataset":
+        return "dataset_phrase"
+    if scope == "broad":
+        return "broad_synonym"
+    if scope == "related":
+        return "related_synonym"
+    return _category_for_term(term, label)
+
+
 def _category_for_term(term: str, label: str) -> str:
     norm_term = _normalize_text(term)
     norm_label = _normalize_text(label)
@@ -74,11 +89,22 @@ def _safe_for_retrieval(
     slot: str,
     repository: str,
 ) -> bool:
+    if category in {"broad_synonym", "related_synonym"}:
+        return False
+
     norm = _normalize_text(term)
     if category == "preferred_label":
         return True
     if _is_whitelisted(term, slot, repository):
         return True
+    if category in {"exact_synonym", "dataset_phrase"}:
+        if " " in term.strip():
+            return True
+        if norm in BLOCKED_SHORT_ACRONYMS:
+            return False
+        if _is_acronym_like(term):
+            return False
+        return len(norm) >= MIN_SAFE_SINGLE_WORD_LENGTH
     if " " in term.strip():
         return True
     if norm in BLOCKED_SHORT_ACRONYMS:
@@ -97,9 +123,13 @@ def classify_term(
     source: str,
     slot: str,
     repository: str = GEO_REPOSITORY,
+    ontology_scope: str | None = None,
 ) -> SynonymAlias:
     """Assign retrieval/evidence metadata to one synonym or alias."""
-    category = _category_for_term(term, label)
+    if ontology_scope:
+        category = _category_from_ontology_scope(ontology_scope, term, label)
+    else:
+        category = _category_for_term(term, label)
     safe = _safe_for_retrieval(term, category, slot, repository)
     requires_context = not safe and (
         category in {"acronym", "abbreviation"} or _is_acronym_like(term)
@@ -133,7 +163,7 @@ def build_aliases_for_mapping(
     seen: set[str] = set()
     aliases: list[SynonymAlias] = []
 
-    def add(term: str, source: str) -> None:
+    def add(term: str, source: str, *, ontology_scope: str | None = None) -> None:
         cleaned = term.strip()
         if not cleaned:
             return
@@ -141,6 +171,7 @@ def build_aliases_for_mapping(
         if key in seen:
             return
         seen.add(key)
+        scope = ontology_scope or (mapping.synonym_scopes or {}).get(key)
         aliases.append(
             classify_term(
                 cleaned,
@@ -148,15 +179,16 @@ def build_aliases_for_mapping(
                 source=source,
                 slot=mapping.slot,
                 repository=repository,
+                ontology_scope=scope,
             )
         )
 
-    add(mapping.label, mapping.source)
-    add(mapping.query_term, "query")
+    add(mapping.label, mapping.source, ontology_scope="label")
+    add(mapping.query_term, "query", ontology_scope="exact")
     for synonym in mapping.synonyms:
         add(synonym, mapping.source)
     for synonym in _seed_synonyms_for_mapping(mapping):
-        add(synonym, "curated")
+        add(synonym, "curated", ontology_scope="dataset")
 
     return aliases
 
@@ -197,7 +229,9 @@ def evidence_terms_for_mapping(
         {
             _normalize_text(alias.term)
             for alias in enriched.aliases
-            if alias.safe_for_retrieval or not alias.requires_context
+            if alias.safe_for_retrieval
+            or alias.category in {"broad_synonym", "related_synonym"}
+            or (not alias.requires_context and alias.category not in {"acronym", "abbreviation"})
         }
     )
 
@@ -268,6 +302,11 @@ def terms_matching_in_text(
 
     for alias in enriched.aliases:
         if alias.safe_for_retrieval and term_in_text(alias.term, text):
+            matched.add(_normalize_text(alias.term))
+            continue
+        if alias.category in {"broad_synonym", "related_synonym"} and term_in_text(
+            alias.term, text
+        ):
             matched.add(_normalize_text(alias.term))
             continue
         if alias.requires_context and term_in_text(alias.term, text) and has_acronym_context(

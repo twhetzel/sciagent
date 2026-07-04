@@ -82,3 +82,55 @@ def test_multi_word_synonyms_remain_in_retrieval():
 
     assert "colitis ulcerative" in retrieval_terms
     assert '"colitis ulcerative"' in search_term or "colitis ulcerative" in search_term
+
+
+def test_ols_related_synonyms_support_evidence_but_not_retrieval():
+    mapping = ConceptMapping(
+        slot="tissue",
+        query_term="colon",
+        curie="UBERON:0001155",
+        label="colon",
+        ontology="UBERON",
+        synonyms=["colon", "hindgut", "large bowel"],
+        synonym_scopes={
+            "colon": "label",
+            "hindgut": "related",
+            "large bowel": "exact",
+        },
+        source="ols",
+    )
+    aliases = build_aliases_for_mapping(mapping)
+    retrieval_terms = retrieval_terms_for_mapping(mapping)
+    search_term = build_geo_search_term([mapping])
+
+    hindgut = next(alias for alias in aliases if alias.term == "hindgut")
+    assert hindgut.category == "related_synonym"
+    assert hindgut.safe_for_retrieval is False
+    assert "hindgut" not in retrieval_terms
+    assert "hindgut" not in search_term.lower()
+    assert "colon" in retrieval_terms
+    assert "large bowel" in retrieval_terms
+
+    fields = {"title": "RNA-seq of hindgut and colon mucosa", "summary": ""}
+    assert "hindgut" in terms_matching_in_text(mapping, fields["title"])
+
+
+def test_ols_broad_synonyms_are_evidence_only():
+    mapping = ConceptMapping(
+        slot="disease",
+        query_term="Crohn's disease",
+        curie="MONDO:0005011",
+        label="Crohn's disease",
+        ontology="MONDO",
+        synonyms=["Crohn's disease", "regional enteritis", "inflammatory bowel disease"],
+        synonym_scopes={
+            "crohn's disease": "label",
+            "regional enteritis": "exact",
+            "inflammatory bowel disease": "broad",
+        },
+        source="ols",
+    )
+    retrieval_terms = retrieval_terms_for_mapping(mapping)
+
+    assert "regional enteritis" in retrieval_terms
+    assert "inflammatory bowel disease" not in retrieval_terms

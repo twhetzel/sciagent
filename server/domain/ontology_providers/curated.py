@@ -112,6 +112,13 @@ class CuratedAliasProvider:
                     ontology=seed["ontology"],
                     iri=seed.get("iri"),
                     synonyms=list(seed["synonyms"]),
+                    synonym_scopes={
+                        _normalize_text(seed["label"]): "label",
+                        **{
+                            _normalize_text(synonym): "dataset"
+                            for synonym in seed["synonyms"]
+                        },
+                    },
                     match_type=match_type,
                     source=self.name,
                     confidence=CONFIDENCE_BY_MATCH[match_type],
