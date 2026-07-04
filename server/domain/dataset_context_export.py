@@ -12,7 +12,7 @@ BASE_DOWNSTREAM_CAUTION = (
 
 
 def _concept_to_dict(mapping: ConceptMapping) -> dict[str, Any]:
-    return {
+    payload = {
         "slot": mapping.slot,
         "query_term": mapping.query_term,
         "label": mapping.label,
@@ -25,6 +25,11 @@ def _concept_to_dict(mapping: ConceptMapping) -> dict[str, Any]:
         "confidence": mapping.confidence,
         "explanation": mapping.explanation,
     }
+    if mapping.selection_reason:
+        payload["selection_reason"] = mapping.selection_reason
+    if mapping.rejected_candidates:
+        payload["rejected_candidates"] = mapping.rejected_candidates
+    return payload
 
 
 def _candidate_to_dict(candidate: DatasetCandidate, rank: int) -> dict[str, Any]:
@@ -35,6 +40,14 @@ def _candidate_to_dict(candidate: DatasetCandidate, rank: int) -> dict[str, Any]
         "repository": candidate.repository,
         "url": candidate.url,
         "score": candidate.score,
+        "display_rank_score": candidate.score,
+        "evidence_score": (
+            candidate.score_breakdown.evidence_score if candidate.score_breakdown else candidate.score
+        ),
+        "match_tier": (
+            candidate.score_breakdown.match_tier if candidate.score_breakdown else None
+        ),
+        "assay_mismatch": candidate.assay_mismatch,
         "match_status": candidate.match_status,
         "retrieval_strategy": candidate.retrieval_strategy,
         "retrieval_search_term": candidate.retrieval_search_term,
@@ -43,6 +56,7 @@ def _candidate_to_dict(candidate: DatasetCandidate, rank: int) -> dict[str, Any]
             "disease": candidate.observed_disease,
             "tissue": candidate.observed_tissue,
             "assay": candidate.observed_assay,
+            "assay_mismatch": candidate.assay_mismatch,
             "organism": candidate.observed_organism,
         },
         "matched_concepts": [_concept_to_dict(m) for m in candidate.matched_concepts],
@@ -110,6 +124,17 @@ def build_downstream_cautions(result: DatasetSearchResult) -> list[str]:
             "Requested assay was not supported by metadata evidence for at least one ranked dataset."
         )
 
+    gxa_assay_mismatch_count = sum(
+        1
+        for candidate in result.candidates
+        if candidate.assay_mismatch
+    )
+    if gxa_assay_mismatch_count:
+        cautions.append(
+            f"{gxa_assay_mismatch_count} ranked result(s) have assay mismatches "
+            "between the requested facet and observed assay metadata."
+        )
+
     if any(c.match_status == "ambiguous_or_mixed" for c in result.candidates):
         cautions.append(
             "Some ranked datasets are ambiguous or mixed (animal models, organoids, or multi-assay); "
@@ -119,7 +144,7 @@ def build_downstream_cautions(result: DatasetSearchResult) -> list[str]:
     if result.total_found > len(result.candidates):
         limit = result.max_results or len(result.candidates)
         cautions.append(
-            f"Showing {len(result.candidates)} of {result.total_found:,} GEO hits "
+            f"Showing {len(result.candidates)} of {result.total_found:,} {result.repository} hits "
             f"(retrieved and ranked up to {limit}); additional candidates may exist."
         )
 
@@ -160,11 +185,22 @@ def export_dataset_search_json(result: DatasetSearchResult) -> dict[str, Any]:
 
 
 def _format_concept_line(mapping: ConceptMapping) -> str:
-    return (
+    line = (
         f"- **{mapping.slot}**: {mapping.label} (`{mapping.curie}`) "
         f"— query term: {mapping.query_term}; source: {mapping.source}; "
         f"match: {mapping.match_type}; confidence: {mapping.confidence:.2f}"
     )
+    if mapping.selection_reason:
+        line += f"\n  - selection: {mapping.selection_reason}"
+    if mapping.rejected_candidates:
+        line += "\n  - rejected candidates:"
+        for rejected in mapping.rejected_candidates[:5]:
+            line += (
+                f"\n    - {rejected.get('label')} (`{rejected.get('curie')}`) "
+                f"[{rejected.get('ontology')}, {rejected.get('source')}, "
+                f"tier={rejected.get('ontology_tier')}, confidence={rejected.get('confidence'):.2f}]"
+            )
+    return line
 
 
 def _format_candidate_markdown(candidate: DatasetCandidate, rank: int) -> str:
@@ -176,7 +212,7 @@ def _format_candidate_markdown(candidate: DatasetCandidate, rank: int) -> str:
     if candidate.url:
         lines.append(f"- **URL**: {candidate.url}")
     lines.append(
-        f"- **Score**: {candidate.score:.3f} | **Match status**: {candidate.match_status}"
+        f"- **Display rank score**: {candidate.score:.3f} | **Match status**: {candidate.match_status}"
     )
     if candidate.retrieval_strategy:
         lines.append(f"- **Retrieval strategy**: {candidate.retrieval_strategy}")
@@ -223,8 +259,29 @@ def _format_candidate_markdown(candidate: DatasetCandidate, rank: int) -> str:
     if candidate.score_breakdown:
         breakdown = candidate.score_breakdown
         lines.append("- **Score breakdown (debug)**:")
-        lines.append(f"  - final score: {breakdown.final_score:.3f}")
-        lines.append(f"  - match status: {breakdown.match_status}")
+        lines.append(
+            "  - formula: display_rank_score = rank_tier × 10 + evidence_score"
+        )
+        lines.append(f"  - base score: {breakdown.base_score:.3f}")
+        lines.append(f"  - quality adjustment: {breakdown.quality_adjustment:+.3f}")
+        if breakdown.assay_rank_adjustment:
+            lines.append(f"  - assay rank adjustment: {breakdown.assay_rank_adjustment:+.3f}")
+        lines.append(f"  - evidence score: {breakdown.evidence_score:.3f}")
+        if breakdown.requested_assay or breakdown.observed_assay:
+            lines.append(
+                f"  - requested assay: {breakdown.requested_assay or '—'}; "
+                f"observed assay: {breakdown.observed_assay or 'unknown'}"
+            )
+        if breakdown.assay_mismatch:
+            lines.append(f"  - assay mismatch: yes ({breakdown.assay_mismatch_note})")
+        elif breakdown.requested_assay:
+            lines.append("  - assay mismatch: no")
+        lines.append(f"  - rank tier: {breakdown.rank_tier} ({breakdown.match_status})")
+        if breakdown.partial_assay_subtype:
+            lines.append(f"  - partial assay subtype: {breakdown.partial_assay_subtype}")
+        lines.append(f"  - display rank score (ordering): {breakdown.display_rank_score:.3f}")
+        if breakdown.match_tier_note:
+            lines.append(f"  - rank tier note: {breakdown.match_tier_note}")
         lines.append(f"  - evidence coverage: {breakdown.evidence_coverage:.3f}")
         if breakdown.retrieval_strategy:
             lines.append(f"  - retrieval strategy: {breakdown.retrieval_strategy}")

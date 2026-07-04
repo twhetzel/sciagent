@@ -7,6 +7,7 @@ import re
 from domain.dataset_search import ConceptMapping
 
 from .base import CONFIDENCE_BY_MATCH
+from domain.tissue_anatomy import anatomy_seed_concepts
 
 SEED_CONCEPTS: dict[str, dict] = {
     "ulcerative colitis": {
@@ -33,22 +34,15 @@ SEED_CONCEPTS: dict[str, dict] = {
         "iri": "http://purl.obolibrary.org/obo/MONDO_0005180",
         "synonyms": ["Parkinson's disease", "Parkinson disease", "Parkinsons disease"],
     },
-    "colon": {
-        "slot": "tissue",
-        "curie": "UBERON:0001155",
-        "label": "colon",
-        "ontology": "UBERON",
-        "iri": "http://purl.obolibrary.org/obo/UBERON_0001155",
-        "synonyms": ["colon", "colonic", "large intestine", "large bowel"],
+    "Alzheimer disease": {
+        "slot": "disease",
+        "curie": "MONDO:0004975",
+        "label": "Alzheimer disease",
+        "ontology": "MONDO",
+        "iri": "http://purl.obolibrary.org/obo/MONDO_0004975",
+        "synonyms": ["Alzheimer disease", "Alzheimer's disease", "Alzheimers disease"],
     },
-    "ileum": {
-        "slot": "tissue",
-        "curie": "UBERON:0000167",
-        "label": "ileum",
-        "ontology": "UBERON",
-        "iri": "http://purl.obolibrary.org/obo/UBERON_0000167",
-        "synonyms": ["ileum", "ileal"],
-    },
+    **anatomy_seed_concepts(),
     "RNA-seq": {
         "slot": "assay",
         "curie": "OBI:0002117",

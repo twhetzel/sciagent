@@ -3,6 +3,7 @@ Agent Orchestrator - Main agent loop: plan → act → observe → synthesize
 """
 
 import json
+import re
 from typing import List, Dict, Any, Optional
 from .registry import ToolRegistry
 from .tracing import TraceCollector
@@ -31,13 +32,15 @@ class AgentOrchestrator:
         from domain.query_interpretation import is_dataset_discovery_query
 
         if is_dataset_discovery_query(query):
-            return self._run_dataset_discovery(query)
+            repositories = self._resolve_dataset_repositories()
+            if repositories:
+                return self._run_dataset_discovery(query, repositories=repositories)
 
         self.tracer.start_trace("agent_run", {"query": query})
         
         try:
             # Step 1: Plan
-            plan = self._plan(query)
+            plan = self._filter_planned_tools(self._plan(query))
             self.tracer.log_step("plan", {"plan": plan})
             
             # Step 2-4: Act-Observe-Synthesize loop
@@ -75,11 +78,39 @@ class AgentOrchestrator:
             self.tracer.log_error("agent_run", str(e))
             return f"Error: {str(e)}", self.tracer.get_traces(), None
 
-    def _run_dataset_discovery(self, query: str) -> tuple[str, List[Dict], Dict[str, Any]]:
+    def _resolve_dataset_repositories(self) -> list[str]:
+        """Return all enabled dataset repositories (GEO first, then Expression Atlas)."""
+        repositories: list[str] = []
+        if self.registry.get_tool("geo_dataset_search"):
+            repositories.append("GEO")
+        if self.registry.get_tool("expression_atlas"):
+            repositories.append("Expression Atlas")
+        return repositories
+
+    def _run_dataset_discovery(
+        self,
+        query: str,
+        *,
+        repositories: list[str],
+    ) -> tuple[str, List[Dict], Dict[str, Any]]:
         """Run the ontology-grounded dataset discovery vertical with explicit trace steps."""
         from agent import dataset_discovery as pipeline
 
-        self.tracer.start_trace("agent_run", {"query": query, "mode": "dataset_discovery"})
+        repository_label = (
+            repositories[0]
+            if len(repositories) == 1
+            else " + ".join(repositories)
+        )
+
+        self.tracer.start_trace(
+            "agent_run",
+            {
+                "query": query,
+                "mode": "dataset_discovery",
+                "repository": repository_label,
+                "repositories": repositories,
+            },
+        )
 
         try:
             interpreted = pipeline.interpret_query(query)
@@ -103,17 +134,33 @@ class AgentOrchestrator:
                 },
             )
 
-            search_result = pipeline.search_repository(
-                concept_mappings,
-                query=query,
-                interpreted_query=interpreted,
+            search_result = (
+                pipeline.search_repositories(
+                    repositories,
+                    concept_mappings,
+                    query=query,
+                    interpreted_query=interpreted,
+                )
+                if len(repositories) > 1
+                else pipeline.search_repository(
+                    repositories[0],
+                    concept_mappings,
+                    query=query,
+                    interpreted_query=interpreted,
+                )
             )
             self.tracer.log_step(
                 "search_repository",
                 {
                     "label": "Search Repository",
-                    "description": "Run multi-strategy GEO search using grounded labels and synonyms",
-                    "repository": search_result.get("repository", "GEO"),
+                    "description": (
+                        "Run multi-strategy search across enabled repositories "
+                        "using grounded labels and synonyms"
+                        if len(repositories) > 1
+                        else f"Run multi-strategy {repositories[0]} search using grounded labels and synonyms"
+                    ),
+                    "repositories": repositories,
+                    "repository": search_result.get("repository", repository_label),
                     "search_term": search_result.get("search_term", ""),
                     "search_strategies": search_result.get("search_strategies", []),
                     "total_found": search_result.get("total_found", 0),
@@ -121,19 +168,29 @@ class AgentOrchestrator:
                     "max_results": search_result.get("max_results"),
                     "has_more": search_result.get("has_more", False),
                     "record_count": len(search_result.get("records", [])),
-                    "source": search_result.get("source", "NCBI GEO"),
+                    "source": search_result.get("source", repository_label),
                     "error": search_result.get("error"),
                 },
             )
 
-            candidates = pipeline.normalize_records(search_result.get("records", []))
+            records = search_result.get("records", [])
+            candidates = (
+                pipeline.normalize_merged_records(records)
+                if len(repositories) > 1
+                else pipeline.normalize_records(repositories[0], records)
+            )
             self.tracer.log_step(
                 "normalize_records",
                 {
                     "label": "Normalize Records",
-                    "description": "Convert GEO-specific API responses into shared DatasetCandidate records",
-                    "repository": search_result.get("repository", "GEO"),
-                    "input_records": len(search_result.get("records", [])),
+                    "description": (
+                        "Convert repository API responses into shared DatasetCandidate records"
+                        if len(repositories) > 1
+                        else f"Convert {repositories[0]} API responses into shared DatasetCandidate records"
+                    ),
+                    "repositories": repositories,
+                    "repository": search_result.get("repository", repository_label),
+                    "input_records": len(records),
                     "candidate_count": len(candidates),
                 },
             )
@@ -180,8 +237,8 @@ class AgentOrchestrator:
                 total_found=search_result.get("total_found", len(ranked)),
                 primary_total_found=search_result.get("primary_total_found"),
                 max_results=search_result.get("max_results"),
-                source=search_result.get("source", "NCBI GEO"),
-                repository=search_result.get("repository", "GEO"),
+                source=search_result.get("source", repository_label),
+                repository=search_result.get("repository", repository_label),
                 search_term=search_result.get("search_term") or None,
                 search_strategies=search_result.get("search_strategies", []),
                 has_more=search_result.get("has_more", False),
@@ -213,6 +270,8 @@ class AgentOrchestrator:
     
     def _plan(self, query: str) -> Dict[str, Any]:
         """Create an initial plan based on the query"""
+        from domain.query_interpretation import is_dataset_discovery_query
+
         # Simple planning logic - in a real implementation, this would use an LLM
         plan = {
             "goal": query,
@@ -223,14 +282,40 @@ class AgentOrchestrator:
         
         # Determine which tools might be needed based on query keywords
         query_lower = query.lower()
+        is_dataset_query = is_dataset_discovery_query(query)
         
         # PubMed: literature search
-        # Also trigger for disease queries
+        # Also trigger for disease queries, but not dataset-discovery phrasing
         has_literature_keywords = any(keyword in query_lower for keyword in ["search", "find", "article", "paper", "research", "pubmed", "literature", "study", "studies", "publication"])
         is_disease_query = any(keyword in query_lower for keyword in ["disease", "syndrome", "disorder", "condition"])
         
-        if has_literature_keywords or is_disease_query:
+        if not is_dataset_query and (has_literature_keywords or is_disease_query):
             plan["tools_needed"].extend(["pubmed", "openalex", "europepmc"])
+
+        # Expression Atlas: gene expression experiments and omics dataset queries
+        # Dataset-discovery queries use the repository pipeline instead of this tool path.
+        has_expression_keywords = (
+            not is_dataset_query
+            and any(
+            keyword in query_lower
+            for keyword in [
+                "expression atlas",
+                "gene expression",
+                "expression",
+                "transcriptome",
+                "transcriptomic",
+                "rna-seq",
+                "rna seq",
+                "rnaseq",
+                "microarray",
+                "omics",
+                "dataset",
+                "datasets",
+                "data set",
+            ]
+        ))
+        if has_expression_keywords:
+            plan["tools_needed"].append("expression_atlas")
         
         # Gene/Protein information
         # Trigger on keywords OR if potential gene symbols are detected
@@ -257,6 +342,16 @@ class AgentOrchestrator:
             plan["tools_needed"].append("summarize")
             
         return plan
+
+    def _filter_planned_tools(self, plan: Dict[str, Any]) -> Dict[str, Any]:
+        """Drop capabilities that are not registered (excluded via SCIAGENT_EXCLUDED_SOURCES or SCIAGENT_EXCLUDED_TOOLS)."""
+        filtered = plan.copy()
+        filtered["tools_needed"] = [
+            tool_name
+            for tool_name in plan.get("tools_needed", [])
+            if self.registry.get_tool(tool_name)
+        ]
+        return filtered
     
     def _act(self, plan: Dict[str, Any], iteration: int) -> List[Dict[str, Any]]:
         """Execute planned actions using available tools"""
@@ -313,6 +408,9 @@ class AgentOrchestrator:
 
         elif tool_name in ("openalex", "europepmc"):
             return {"query": query}
+
+        elif tool_name == "expression_atlas":
+            return self._build_expression_atlas_params(query)
         
         elif tool_name == "mygene":
             # Look for gene symbols in the query
@@ -577,6 +675,8 @@ class AgentOrchestrator:
                 response += self._format_literature_results(i, data, "OpenAlex Search Results")
             elif tool_name == "europepmc":
                 response += self._format_literature_results(i, data, "Europe PMC Search Results")
+            elif tool_name == "expression_atlas":
+                response += self._format_expression_atlas_results(i, data)
             
             elif tool_name == "mygene":
                 if isinstance(data, dict) and data.get("found"):
@@ -700,16 +800,102 @@ class AgentOrchestrator:
             return f"{index}. **{label}**: {data['error']}\n\n"
         return f"{index}. **{label}**: {data}\n\n"
 
+    def _format_expression_atlas_results(self, index: int, data: Any) -> str:
+        """Format Expression Atlas experiment search results."""
+        if isinstance(data, dict) and "results" in data:
+            experiments = data["results"]
+            if experiments:
+                total = data.get("total_found", len(experiments))
+                primary = data.get("primary_total_found", total)
+                block = (
+                    f"{index}. **Expression Atlas Search Results** "
+                    f"(showing {len(experiments)} of {total} experiments"
+                )
+                if primary != total:
+                    block += f"; primary strategy: {primary}"
+                block += "):\n"
+                strategies = data.get("search_strategies") or []
+                if strategies:
+                    block += "   Search strategies:\n"
+                    for summary in strategies:
+                        block += (
+                            f"     - {summary.get('strategy')}: "
+                            f"{summary.get('total_found', 0)} hits "
+                            f"({summary.get('search_term', '')})\n"
+                        )
+                for j, experiment in enumerate(experiments[:5], 1):
+                    title = experiment.get("title", "No title")
+                    accession = experiment.get("accession", "Unknown")
+                    species = experiment.get("species") or "Unknown species"
+                    experiment_type = experiment.get("experiment_type") or "Unknown type"
+                    strategy = experiment.get("retrieval_strategy")
+                    block += f"   {j}. {title}\n"
+                    block += f"      Accession: {accession}\n"
+                    block += f"      Species: {species}\n"
+                    block += f"      Type: {experiment_type}\n"
+                    if strategy:
+                        block += f"      Strategy: {strategy}\n"
+                    block += f"      URL: {experiment.get('url', 'N/A')}\n\n"
+                if total > 5:
+                    block += f"   ... and {total - 5} more experiments\n"
+                block += f"   Source: {data.get('source', 'Expression Atlas')}\n\n"
+                return block
+            return f"{index}. **Expression Atlas Search Results**: No experiments found for the query.\n\n"
+        if isinstance(data, dict) and data.get("error"):
+            return f"{index}. **Expression Atlas Search Results**: {data['error']}\n\n"
+        return f"{index}. **Expression Atlas Search Results**: {data}\n\n"
+
+    def _build_expression_atlas_params(self, query: str) -> Dict[str, Any]:
+        """Build a focused Expression Atlas query instead of sending raw chat text."""
+        from domain.query_interpretation import interpret_dataset_query, is_dataset_discovery_query
+
+        params: Dict[str, Any] = {}
+        species = self._extract_species_filter(query)
+
+        if is_dataset_discovery_query(query):
+            interpreted = interpret_dataset_query(query)
+            params["interpreted_query"] = interpreted.model_dump()
+            params["query"] = query
+            if not species and interpreted.organism == "human":
+                species = "Homo sapiens"
+        else:
+            params["query"] = query
+
+        if species:
+            params["species"] = species
+        return params
+
+    def _extract_species_filter(self, query: str) -> str | None:
+        """Extract an optional species filter from the query text."""
+        query_lower = query.lower()
+        if "homo sapiens" in query_lower:
+            return "Homo sapiens"
+        if re.search(r"\bhuman(s)?\b", query_lower):
+            return "Homo sapiens"
+        if "mus musculus" in query_lower:
+            return "Mus musculus"
+        if re.search(r"\bmouse\b", query_lower):
+            return "Mus musculus"
+        if "rattus norvegicus" in query_lower:
+            return "Rattus norvegicus"
+        if re.search(r"\brat(s)?\b", query_lower):
+            return "Rattus norvegicus"
+        return None
+
     def _format_dataset_search_response(self, result) -> str:
         """Brief chat summary; full details live in the structured dataset_search payload."""
+        repository = result.repository or "repository"
         if not result.candidates:
             if result.total_found:
                 return (
-                    f"GEO search found {result.total_found} potential matches, "
+                    f"{repository} search found {result.total_found} potential matches, "
                     "but record retrieval failed or returned no usable metadata. "
-                    "See details below, or try again after setting PUBMED_EMAIL for NCBI rate limits."
+                    "See details below."
                 )
-            return f"No matching datasets were found ({result.total_found} raw GEO hits). See details below."
+            return (
+                f"No matching datasets were found in {repository} "
+                f"({result.total_found} raw hits). See details below."
+            )
 
         count = len(result.candidates)
         dataset_word = "dataset" if count == 1 else "datasets"
@@ -717,9 +903,17 @@ class AgentOrchestrator:
         if total > count:
             limit_note = ""
             if result.max_results:
-                limit_note = f" (GEO_MAX_RESULTS={result.max_results})"
+                if " + " in repository:
+                    env_hint = "GEO_MAX_RESULTS / EXPRESSION_ATLAS_MAX_RESULTS"
+                else:
+                    env_hint = (
+                        "GEO_MAX_RESULTS"
+                        if repository == "GEO"
+                        else "EXPRESSION_ATLAS_MAX_RESULTS"
+                    )
+                limit_note = f" ({env_hint}={result.max_results})"
             return (
-                f"Showing {count} of {total:,} GEO hits{limit_note} — "
+                f"Showing {count} of {total:,} {repository} hits{limit_note} — "
                 f"{count} ranked {dataset_word} by evidence. "
                 "See ranked results below for match status and export context."
             )

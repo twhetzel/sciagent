@@ -3,9 +3,10 @@ PubMed tool - fetch scientific articles from PubMed
 """
 
 import requests
-import os
 from typing import Dict, Any, List
 from bs4 import BeautifulSoup
+
+from sciagent_server.config import build_ncbi_params
 
 
 def fetch_pubmed(query: str, max_results: int = 10) -> Dict[str, Any]:
@@ -30,8 +31,7 @@ def fetch_pubmed(query: str, max_results: int = 10) -> Dict[str, Any]:
             "term": query,
             "retmax": max_results,
             "retmode": "json",
-            "tool": os.getenv("PUBMED_TOOL", "sciagent_studio"),
-            "email": os.getenv("PUBMED_EMAIL", "")
+            **build_ncbi_params(),
         }
         
         search_response = requests.get(search_url, params=search_params, timeout=10)
@@ -57,8 +57,7 @@ def fetch_pubmed(query: str, max_results: int = 10) -> Dict[str, Any]:
             "db": "pubmed",
             "id": ",".join(pmids),
             "retmode": "xml",
-            "tool": os.getenv("PUBMED_TOOL", "sciagent_studio"),
-            "email": os.getenv("PUBMED_EMAIL", "")
+            **build_ncbi_params(),
         }
         
         fetch_response = requests.get(fetch_url, params=fetch_params, timeout=15)

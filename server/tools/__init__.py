@@ -11,6 +11,7 @@ from .alphafold import get_alphafold
 from .clinvar import get_clinvar_variants, get_pathogenic_variants
 from .openalex import fetch_openalex
 from .europepmc import fetch_europepmc
+from .expression_atlas import search_expression_atlas
 from .geo_dataset_search import search_geo_datasets
 
 __all__ = [
@@ -23,5 +24,6 @@ __all__ = [
     "get_pathogenic_variants",
     "fetch_openalex",
     "fetch_europepmc",
+    "search_expression_atlas",
     "search_geo_datasets",
 ]

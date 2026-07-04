@@ -118,7 +118,7 @@ def build_score_breakdown(
         evidence_conflicts_count=len(candidate.evidence_conflicts),
         retrieval_strategy=candidate.retrieval_strategy,
         evidence_coverage=round(evidence_coverage, 3),
-        final_score=round(score, 3),
+        evidence_score=round(score, 3),
         match_status="partial",
     )
     breakdown.match_status = determine_match_status(

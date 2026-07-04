@@ -13,6 +13,12 @@ from .synonym_classification import (
     term_in_text,
     terms_matching_in_text,
 )
+from .gxa_assay import (
+    GXA_EXPERIMENT_TYPE_FIELD,
+    GXA_OBSERVED_ASSAY_FIELD,
+    build_gxa_assay_warning,
+    gxa_supports_requested_assay,
+)
 
 DERIVED_TISSUE_MODEL_PATTERNS: tuple[str, ...] = (
     r"\borganoids?\b",
@@ -30,6 +36,16 @@ ASSAY_DETECTORS: list[tuple[str, list[str]]] = [
     ("ChIP-seq", [r"\bchip[\s-]?seq\b", r"chromatin immunoprecipitation"]),
     ("methylation", [r"\bmethylation\b", r"\bbisulfite\b", r"\b450k\b", r"\be methylation\b"]),
     ("microarray", [r"\bmicroarray\b", r"\baffymetrix\b", r"\bagilent\b.*\barray\b"]),
+    (
+        "proteomics",
+        [
+            r"\bproteomic",
+            r"\bproteomics\b",
+            r"\blc[\s-]?ms/?ms\b",
+            r"\blc[\s-]?ms\b",
+            r"\bmass spectromet",
+        ],
+    ),
     (
         "RNA-seq",
         [
@@ -168,6 +184,10 @@ def detect_assays_by_field(fields: dict[str, str]) -> dict[str, set[str]]:
 
 def detect_observed_assay(fields: dict[str, str]) -> str:
     """Summarize assay type from returned metadata only (never from the user query)."""
+    gxa_observed = fields.get(GXA_OBSERVED_ASSAY_FIELD, "").strip()
+    if gxa_observed:
+        return gxa_observed
+
     by_field = detect_assays_by_field(fields)
     all_assays: set[str] = set()
     for assays in by_field.values():
@@ -193,6 +213,12 @@ def _assay_supported_in_field(mapping: ConceptMapping, field_name: str, text: st
 
 def _assay_evidence_fields(fields: dict[str, str], mapping: ConceptMapping) -> list[tuple[str, str]]:
     """Return fields that explicitly support the requested assay in returned metadata."""
+    gxa_type = fields.get(GXA_EXPERIMENT_TYPE_FIELD, "").strip()
+    if gxa_type:
+        if gxa_supports_requested_assay(gxa_type, mapping.label):
+            return [(GXA_EXPERIMENT_TYPE_FIELD, gxa_type)]
+        return []
+
     matches: list[tuple[str, str]] = []
     for field_name in SLOT_FIELD_PRIORITY:
         text = fields.get(field_name, "")
@@ -266,8 +292,12 @@ def build_metadata_warnings(
 
     assay_mapping = mapping_by_slot.get("assay")
     if assay_mapping:
+        gxa_warning = build_gxa_assay_warning(fields, assay_mapping)
+        if gxa_warning:
+            warnings.append(gxa_warning)
+
         has_assay_evidence = bool(_assay_evidence_fields(fields, assay_mapping))
-        if not has_assay_evidence and observed_assay == "unknown":
+        if not has_assay_evidence and not gxa_warning:
             warnings.append(
                 f"No returned metadata field explicitly supports requested {assay_mapping.label}."
             )
