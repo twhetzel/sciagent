@@ -10,6 +10,7 @@ const TOOL_ICONS = {
   clinvar: '⚕️',
   alphafold: '🔬',
   summarize: '✨',
+  geo_dataset_search: '🗂️',
 }
 
 export default function ToolsSidebar({ activeTools = [] }) {

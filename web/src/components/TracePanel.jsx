@@ -10,6 +10,16 @@ function statusClass(status) {
   return 'trace-status--running'
 }
 
+const DATASET_DISCOVERY_STEPS = new Set([
+  'interpret_query',
+  'ground_query',
+  'search_repository',
+  'normalize_records',
+  'annotate_evidence',
+  'rank_results',
+  'respond',
+])
+
 function stepClass(name, data) {
   if (name === 'error') return 'trace-step--error'
   if (name === 'tool_execution') {
@@ -20,6 +30,12 @@ function stepClass(name, data) {
   if (name === 'observe') return 'trace-step--observe'
   if (name === 'synthesize') return 'trace-step--synth'
   if (name === 'normalize') return 'trace-step--normalize'
+  if (name === 'normalize_records') return 'trace-step--tool'
+  if (name === 'search_repository') return 'trace-step--tool'
+  if (name === 'annotate_evidence') return 'trace-step--observe'
+  if (name === 'rank_results') return 'trace-step--synth'
+  if (name === 'respond') return 'trace-step--plan'
+  if (DATASET_DISCOVERY_STEPS.has(name)) return 'trace-step--plan'
   return 'trace-step--default'
 }
 
@@ -132,7 +148,7 @@ function summarizeStep(name, data, steps, stepIndex) {
       }
     case 'normalize':
       return {
-        title: 'Normalize',
+        title: 'Normalize (tool results)',
         summary:
           data?.status === 'skipped'
             ? 'No terms to normalize'
@@ -144,6 +160,58 @@ function summarizeStep(name, data, steps, stepIndex) {
           .slice(0, 4)
           .map((m) => m.curie || m.label)
           .filter(Boolean),
+      }
+    case 'interpret_query':
+      return {
+        title: data?.label || 'Interpret Query',
+        summary: [
+          data?.interpreted_query?.disease && `disease: ${data.interpreted_query.disease}`,
+          data?.interpreted_query?.tissue && `tissue: ${data.interpreted_query.tissue}`,
+          data?.interpreted_query?.assay && `assay: ${data.interpreted_query.assay}`,
+          data?.interpreted_query?.organism && `organism: ${data.interpreted_query.organism}`,
+        ]
+          .filter(Boolean)
+          .join(', ') || 'Extract query facets',
+        chips: [],
+      }
+    case 'ground_query':
+      return {
+        title: data?.label || 'Ground Query',
+        summary: `${data?.mapping_count ?? 0} requested facet(s) mapped to ontology concepts`,
+        chips: (data?.concept_mappings || [])
+          .slice(0, 4)
+          .map((m) => m.curie || m.label)
+          .filter(Boolean),
+      }
+    case 'search_repository':
+      return {
+        title: data?.label || 'Search Repository',
+        summary: `${data?.record_count ?? 0} GEO record(s) retrieved (${data?.total_found ?? 0} total hits)`,
+        chips: data?.repository ? [data.repository] : [],
+      }
+    case 'normalize_records':
+      return {
+        title: data?.label || 'Normalize Records',
+        summary: `${data?.candidate_count ?? 0} DatasetCandidate record(s) from ${data?.input_records ?? 0} GEO payload(s)`,
+        chips: data?.repository ? [data.repository] : [],
+      }
+    case 'annotate_evidence':
+      return {
+        title: data?.label || 'Annotate Evidence',
+        summary: `${data?.evidence_snippet_count ?? 0} evidence snippet(s) across ${data?.candidate_count ?? 0} candidate(s)`,
+        chips: data?.warning_count != null ? [`${data.warning_count} warnings`] : [],
+      }
+    case 'rank_results':
+      return {
+        title: data?.label || 'Rank Results',
+        summary: `${data?.candidate_count ?? 0} candidate(s); ${data?.full_matches ?? 0} full, ${data?.partial_matches ?? 0} partial`,
+        chips: data?.top_accessions || [],
+      }
+    case 'respond':
+      return {
+        title: data?.label || 'Respond',
+        summary: `Rendered ${data?.candidate_count ?? 0} ranked dataset result(s)`,
+        chips: [],
       }
     case 'error':
       return {
@@ -160,6 +228,10 @@ function summarizeToolResult(data) {
   const payload = data?.data
   if (!payload || typeof payload !== 'object') return 'Completed'
 
+  if (data?.tool === 'geo_dataset_search') {
+    const count = payload.candidate_count ?? payload.total_found
+    return count != null ? `Found ${count} GEO dataset(s)` : 'GEO search completed'
+  }
   if (payload.results && Array.isArray(payload.results)) {
     return `Found ${payload.results.length} result(s)`
   }
@@ -180,7 +252,13 @@ function StepCard({ step, steps, stepIndex }) {
   return (
     <details
       className={`trace-step ${stepClass(name, data)}`}
-      open={name === 'tool_execution' || name === 'error' || name === 'iteration' || name === 'normalize'}
+      open={
+        name === 'tool_execution' ||
+        name === 'error' ||
+        name === 'iteration' ||
+        name === 'normalize' ||
+        DATASET_DISCOVERY_STEPS.has(name)
+      }
     >
       <summary>
         <span className="trace-step-name">{info.title}</span>
@@ -232,7 +310,7 @@ export default function TracePanel({ traces }) {
     <aside className="trace-panel">
       <header className="trace-header">
         <h2>Execution Trace</h2>
-        <p>Live agent plan → act → observe → synthesize</p>
+        <p>Standard path: plan → act → observe → normalize. Dataset discovery uses its own labeled steps.</p>
       </header>
 
       <div className="trace-content">

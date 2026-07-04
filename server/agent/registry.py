@@ -192,3 +192,28 @@ class ToolRegistry:
             )
         except ImportError:
             pass
+
+        try:
+            from tools.geo_dataset_search import search_geo_datasets
+            self.register_tool(
+                name="geo_dataset_search",
+                description="Search NCBI GEO for public omics datasets using grounded ontology concepts",
+                function=search_geo_datasets,
+                parameters={
+                    "concept_mappings": {
+                        "type": "list",
+                        "required": True,
+                        "description": "Grounded ontology concept mappings",
+                    },
+                    "max_results": {
+                        "type": "int",
+                        "required": False,
+                        "description": (
+                            "Maximum GEO records to retrieve and rank "
+                            "(defaults to GEO_MAX_RESULTS env or 15)"
+                        ),
+                    },
+                },
+            )
+        except ImportError:
+            pass

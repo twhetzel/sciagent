@@ -17,6 +17,44 @@ FastAPI (sciagent_server)
 
 The FastAPI layer is intentionally thin: it only calls `orchestrator.run(prompt)` and exposes the result. All routing logic lives in the ported SciAgent Studio agent module.
 
+## How the orchestrator works (no LLM required)
+
+Most of SciAgent Studio does **not** use an LLM. The orchestrator runs a plan → act → observe → synthesize loop, but planning, tool selection, and the final chat answer are **rule-based**—not LLM tool-calling.
+
+```
+User query
+  → keyword heuristics + entity extraction (gene symbols, disease terms, …)
+  → ToolRegistry → public scientific APIs
+  → template formatters → response + execution trace
+```
+
+Optional LLM layers (summarization, ontology synonym expansion) sit on top of this pipeline and are skipped when API keys are not set.
+
+### Standard agent path
+
+| Step | What happens | LLM needed? |
+|------|----------------|-------------|
+| **Plan** | Match query keywords (`gene`, `variants`, `literature`, `structure`, …) and extract entities to choose tools | No |
+| **Act** | Call selected tools against external APIs (MyGene, UniProt, PubMed, ClinVar, AlphaFold, …) | No |
+| **Observe / synthesize** | Count successes and failures; decide whether to retry | No |
+| **Normalize (tool results)** | Map free-text terms in tool outputs to ontology IDs via OLS → BioPortal → Claude | Only tiers 2–3 (optional) |
+| **Respond** | Assemble the answer from structured tool JSON using string templates | No |
+
+### Dataset discovery path
+
+Queries that mention datasets (`RNA-seq`, `GEO`, `dataset`, …) take a separate seven-step pipeline (documented below): regex facet extraction → ontology grounding → GEO search → evidence-based ranking → structured response. Grounding uses OLS and curated aliases first; BioPortal and LLM disambiguation are optional fallbacks.
+
+### Where LLM API keys matter
+
+| Feature | Env var | Without key |
+|---------|---------|-------------|
+| `summarize` tool | `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | Other tools still run; summarize returns an error in the response |
+| Ontology normalization tier 3 | `ANTHROPIC_API_KEY` | Tier 1 (OLS) still runs; unmatched terms stay unmatched |
+| BioPortal lookup (tier 2) | `BIOPORTAL_API_KEY` | Skipped; OLS and curated fallback still run |
+| Dataset grounding LLM step | `ANTHROPIC_API_KEY` | Skipped when OLS or curated aliases already match |
+
+Queries like `BRCA1 gene`, `marfan syndrome variants`, or `Find RNA-seq datasets for ulcerative colitis colon tissue` work out of the box: the agent fetches real API data and formats it with code, not an LLM reasoning through the question.
+
 ## Tool inventory
 
 | Tool | Data source | Auth |
@@ -28,10 +66,11 @@ The FastAPI layer is intentionally thin: it only calls `orchestrator.run(prompt)
 | `uniprot` | UniProt REST | None |
 | `clinvar` | NCBI E-utilities (ClinVar) | Same NCBI env vars as PubMed |
 | `alphafold` | AlphaFold EBI API | None |
+| `geo_dataset_search` | NCBI GEO (GDS) | Same NCBI env vars as PubMed |
 | `summarize` | OpenAI / Anthropic | `OPENAI_API_KEY` and/or `ANTHROPIC_API_KEY` |
 | *(post-processing)* | OLS / BioPortal / Claude | Optional `BIOPORTAL_API_KEY`, `ANTHROPIC_API_KEY` for ontology normalization |
 
-The orchestrator uses keyword heuristics (not LLM tool-calling) to select tools. After tools finish, ontology normalization runs automatically. See [Example queries](#example-queries) below.
+See [How the orchestrator works](#how-the-orchestrator-works-no-llm-required) for the full routing model. On the standard agent path, `tools/ontology_normalizer.py` runs after tools finish and appears in the trace as **Normalize (tool results)**. Dataset discovery queries use a separate seven-step pipeline documented below.
 
 ## Example queries
 
@@ -57,6 +96,113 @@ SciAgent Studio routes queries based on keywords and simple entity extraction (g
 | `EGFR 3D structure` | MyGene, UniProt, AlphaFold | `3D` triggers AlphaFold alongside gene tools |
 | `Summarize TP53 gene function` | MyGene, UniProt, summarize | Summarize step aggregates gene/protein text |
 
+### Dataset discovery (GEO)
+
+These queries use a dedicated trace path and **do not** call `ontology_normalizer.py`. Do not confuse **Normalize Records** (repository payload → `DatasetCandidate`) with **Normalize (tool results)** on the gene/literature/ClinVar path.
+
+| Step | Responsibility |
+|------|----------------|
+| **Interpret Query** | Extract disease, tissue, assay, organism facets via regex patterns, abbreviation resolution, and phrase grounding |
+| **Ground Query** | Map requested facets to ontology concepts using curated aliases/cache plus ontology lookup providers |
+| **Search Repository** | Search GEO using grounded labels and synonyms |
+| **Normalize Records** | Convert GEO API payloads into shared `DatasetCandidate` records |
+| **Annotate Evidence** | Identify metadata fields that support facet matches; collect evidence snippets |
+| **Rank Results** | Score candidates by evidence coverage (requested facets are not inherited without evidence) |
+| **Respond** | Render chat response, structured `dataset_search` payload, and warnings |
+
+| Question | What you should see |
+|----------|---------------------|
+| `Find public RNA-seq datasets for ulcerative colitis colon tissue` | Ranked GEO datasets in the middle panel; trace steps above; requested vs observed assay, evidence snippets, metadata warnings; **Load more** when additional GEO hits remain |
+| `Find public RNA-seq datasets for UC colon tissue` | Same as above: `UC` resolves to ulcerative colitis for search planning; **4 search strategies**; GEO query uses full disease terms, not `UC` |
+| `Find public RNA-seq datasets for Crohn's disease ileum tissue` | Disease and tissue resolved via phrase grounding; **4 search strategies** |
+
+#### Query interpretation: what works and what can still break
+
+Interpretation runs in three layers:
+
+1. **Regex patterns** — fast matches for common assays (`RNA-seq`), tissues (`colon`), and a small set of explicit disease phrases
+2. **Abbreviation resolution** — short acronyms (`UC`, `CD`, `PD`, …) grounded via curated aliases and ontology lookup, with clinical-context checks
+3. **Phrase resolution** — multi-word n-grams grounded via curated aliases, OLS/BioPortal, and optional LLM expansion
+
+Abbreviations are resolved for **understanding** but excluded from **GEO query strings** when they are ambiguous (e.g. `UC` is never sent to NCBI; `ulcerative colitis` is).
+
+**Synonym tiers (retrieval vs evidence)**
+
+| Source | Used in GEO primary query | Used in evidence matching |
+|--------|---------------------------|---------------------------|
+| Preferred label | Yes | Yes |
+| OLS/BioPortal exact synonyms | Yes | Yes |
+| Curated dataset phrases (e.g. `colonic`, `RNA-seq`) | Yes | Yes |
+| OLS broad / related synonyms (e.g. `hindgut` for colon) | No | Yes |
+| Contextual acronyms (`UC`, `PD`, …) | No | Yes, with supporting context |
+
+Related ontology synonyms can support ranking and evidence snippets but do not automatically broaden the primary repository search.
+
+**What works well**
+
+| Query shape | Example | Notes |
+|-------------|---------|-------|
+| Full disease + tissue + assay | `Find public RNA-seq datasets for ulcerative colitis colon tissue` | Baseline path; **4 search strategies** |
+| Clinical abbreviations with context | `Find public RNA-seq datasets for UC colon tissue` | `UC` → ulcerative colitis; requires supporting context (colon, colitis, tissue, …) |
+| Multi-word disease/tissue not in regex | `Find public RNA-seq datasets for Crohn's disease ileum tissue` | Phrase grounding via curated cache or OLS |
+| Punctuation-normalized phrasing | `ulcerative-colitis`, `Crohn's disease; ileum`, `Parkinson's disease (PD) substantia nigra` | Parentheticals stripped for n-grams; abbrevs extracted from `(UC)` / `(PD)`; hyphens and apostrophes normalized for lookup |
+| Hyphenated compounds | `ulcerative-colitis`, `UC-colon biopsies` | Lookup tries spaced variants (`ulcerative colitis`) |
+| Curated concepts | ulcerative colitis, Crohn's disease, Parkinson's disease, colon, ileum, RNA-seq, human | Fast, offline hits |
+
+**Safety behavior (intentional)**
+
+- Abbreviations like `UC` at `UC Berkeley` are **not** resolved as disease (no clinical context)
+- Blocked acronyms are used for facet intent, not GEO retrieval query terms
+- Grounded concepts must match expected ontology IDs for the slot (e.g. UBERON anatomy is not accepted as a disease)
+
+**What can still break**
+
+| Limitation | Example | Why |
+|------------|---------|-----|
+| Inverted or non-adjacent phrasing | `ileum biopsies from Crohn's patients` | Phrase scan uses contiguous n-grams; disease/tissue words far apart may not form a groundable phrase |
+| Multi-clause sentences | `I need RNA-seq. Disease is lupus. Tissue is kidney.` | No full-sentence semantic parser; each clause is not interpreted independently |
+| Unknown terms outside ontology coverage | Obscure disease names with no OLS/MONDO match | Dynamic lookup capped at 6 OLS/BioPortal attempts per query after curated misses |
+| List ordering for tissues | `ileum, colon, Crohn's disease` | First grounded tissue wins (`colon` before `ileum` in scan order) |
+| Single-word dynamic lookup | Rare one-word tissue/disease terms not in curated cache | Dynamic pass skips single-word phrases to reduce noise; relies on curated seed or multi-word context |
+| Assay / organism regex coverage | `ChIP-seq`, `mouse` studies | Regex patterns are narrow; may need phrase grounding or pattern expansion |
+| LLM expansion | Obscure aliases | Requires `ANTHROPIC_API_KEY`; without it, only curated + OLS/BioPortal exact/synonym matches apply |
+| Unusual nested punctuation | Multiple parentheticals, heavy nested qualifiers | Parentheticals are stripped; very complex structure may still produce noisy n-grams |
+
+**Tips for reliable dataset-discovery queries**
+
+- Prefer `{assay} datasets for {disease} {tissue}` when possible
+- Spell out disease names or use abbreviations with clinical context (`UC colon tissue`, not `UC` alone)
+- Use commas or semicolons between facets freely; hyphens and apostrophes in disease names are fine
+- If a term is important and often used, add it to `server/domain/ontology_providers/curated.py` for faster, more reliable routing
+
+#### GEO retrieval and load more
+
+Dataset discovery retrieves GEO records in batches rather than ranking the entire repository at once.
+
+| Setting / field | Meaning |
+|-----------------|--------|
+| `GEO_MAX_RESULTS` | Batch size for each initial search and each **Load more** click (default `15`, cap `200`) |
+| `total_found` | Maximum hit count across all search strategies (e.g. disease-only broad query) |
+| `primary_total_found` | Hit count for the strict disease + assay + tissue query |
+| `retrieved_count` | Number of GEO records fetched and ranked so far |
+| `has_more` | Whether additional unseen GEO IDs remain in the strategy cursors |
+| `load_more_cursor` | Opaque state returned to the client for the next batch |
+
+**Initial query** runs all strategy count queries, retrieves the first batch (strict strategy first), annotates evidence, ranks, and returns a cursor.
+
+**Load more** (`POST /api/dataset-search/more`) sends the cursor plus the current ranked candidates. The server:
+
+1. Pages the next unseen GEO IDs using per-strategy `retstart` offsets (strict → broad)
+2. Fetches metadata (`esummary`) for the new batch only
+3. Annotates the new records
+4. Merges with prior candidates and **re-ranks the full retrieved set** by evidence
+
+The UI banner shows `Showing X of Y GEO hits` where `Y` is `total_found` and `X` is `retrieved_count`. Use **Load more** to increase `X` without re-running the original chat query.
+
+While loading, a sticky action bar above the query input shows a spinner and status; newly fetched datasets are highlighted and the view scrolls to the first new result.
+
+When dataset discovery results are shown, the middle column uses a **split layout**: query context (hit counts, facets, grounded concepts) stays fixed at the top; only the ranked dataset cards scroll in the pane below.
+
 **Tips for reliable routing:**
 
 - Use standard gene symbols (`BRCA1`, not `brca1`).
@@ -64,11 +210,11 @@ SciAgent Studio routes queries based on keywords and simple entity extraction (g
 - For ClinVar **by condition**, include a disease term (`syndrome`, `disease`, `disorder`, `condition`)—not just a colloquial name.
 - Multi-tool queries can take 10–30 seconds; watch the trace panel for progress.
 
-### Ontology normalization
+### Ontology normalization (standard agent path)
 
-After tools run, the agent maps free-text terms from tool results to formal ontology IDs (MONDO, HP, GO, NCBITaxon, CHEBI, UBERON) using a three-tier lookup: **OLS** → **BioPortal** (`BIOPORTAL_API_KEY`) → **Claude synonym expansion** (`ANTHROPIC_API_KEY`). Results appear on each tool payload as `normalized_terms` and in a **`normalize`** trace step.
+After gene/literature/ClinVar tools run, the agent maps free-text terms from **tool results** to formal ontology IDs (MONDO, HP, GO, NCBITaxon, CHEBI, UBERON) using a three-tier lookup in `tools/ontology_normalizer.py`: **OLS** → **BioPortal** (`BIOPORTAL_API_KEY`) → **Claude synonym expansion** (`ANTHROPIC_API_KEY`). Results appear on each tool payload as `normalized_terms` and in a **`normalize`** trace step labeled **Normalize (tool results)**.
 
-Look for the **Normalize** step in the trace panel (matched/unmatched counts and CURIE chips). Expand it to see each mapping: source tool, tier, `match_type`, and resolved label.
+This is separate from dataset discovery, where **Ground Query** maps requested facets via curated aliases/cache and ontology lookup providers (OLS, BioPortal, LLM disambiguation) and **Normalize Records** handles GEO payload shaping.
 
 | Question | What normalization demonstrates | Optional env vars |
 |----------|--------------------------------|-------------------|
@@ -160,7 +306,31 @@ Response:
 ```json
 {
   "response": "Based on your query ...",
-  "traces": [{ "id": "agent_run", "steps": [...], "status": "completed" }]
+  "traces": [{ "id": "agent_run", "steps": [...], "status": "completed" }],
+  "dataset_search": { "...": "present for dataset-discovery queries" }
+}
+```
+
+### `POST /api/dataset-search/more`
+
+Load the next GEO batch for an in-progress dataset discovery result. Reuses the cursor from `dataset_search.load_more_cursor` and re-ranks merged candidates.
+
+Request:
+
+```json
+{
+  "load_more_cursor": { "...": "from prior dataset_search response" },
+  "candidates": [{ "...": "current ranked candidates" }]
+}
+```
+
+Response:
+
+```json
+{
+  "dataset_search": { "...": "updated ranked results and cursor" },
+  "added_count": 15,
+  "has_more": true
 }
 ```
 
@@ -178,12 +348,19 @@ Each trace document includes:
 
 | Step | Description |
 |------|-------------|
+| `interpret_query` | *(dataset discovery)* **Interpret Query** — extracted disease, tissue, assay, organism |
+| `ground_query` | *(dataset discovery)* **Ground Query** — curated aliases/cache plus ontology lookup providers |
+| `search_repository` | *(dataset discovery)* **Search Repository** — GEO search using grounded synonyms |
+| `normalize_records` | *(dataset discovery)* **Normalize Records** — GEO payloads → `DatasetCandidate` |
+| `annotate_evidence` | *(dataset discovery)* **Annotate Evidence** — field-level concept/evidence matching |
+| `rank_results` | *(dataset discovery)* **Rank Results** — evidence-based scoring |
+| `respond` | *(dataset discovery)* **Respond** — rendered answer and structured results |
 | `plan` | Goal and `tools_needed` |
 | `iteration` | Loop counter |
 | `tool_execution` | Tool name, status, parameters, result |
 | `observe` | Success/failure counts |
 | `synthesize` | Updated plan |
-| `normalize` | Ontology mappings (tier, CURIE, match type) per extracted term |
+| `normalize` | *(standard agent path)* **Normalize (tool results)** — OLS / BioPortal / Claude on tool outputs |
 | `error` | Failure details (if any) |
 
 The React trace panel renders these as a color-coded timeline instead of raw JSON.
@@ -196,7 +373,8 @@ See [`.env.example`](.env.example). Key variables:
 |----------|---------|
 | `SCIAGENT_HOST` / `SCIAGENT_PORT` | API bind address |
 | `SCIAGENT_CORS_ORIGINS` | Allowed browser origins (comma-separated) |
-| `PUBMED_EMAIL` | NCBI politeness for PubMed/ClinVar |
+| `PUBMED_EMAIL` | NCBI politeness for PubMed/ClinVar/GEO |
+| `GEO_MAX_RESULTS` | Max GEO records to retrieve and rank per dataset-discovery query (default `15`, cap `200`) |
 | `OPENALEX_EMAIL` | OpenAlex `mailto` parameter |
 | `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | Optional summarization and ontology tier 3 |
 | `BIOPORTAL_API_KEY` | Optional BioPortal ontology lookup (tier 2) |

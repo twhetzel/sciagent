@@ -18,7 +18,7 @@ class AgentOrchestrator:
         self.prompts = SystemPrompts()
         self.max_iterations = 5
         
-    def run(self, query: str) -> tuple[str, List[Dict]]:
+    def run(self, query: str) -> tuple[str, List[Dict], Dict[str, Any] | None]:
         """
         Main entry point for the agent
         
@@ -26,8 +26,13 @@ class AgentOrchestrator:
             query: User's question or request
             
         Returns:
-            tuple: (final_response, execution_traces)
+            tuple: (final_response, execution_traces, optional dataset_search payload)
         """
+        from domain.query_interpretation import is_dataset_discovery_query
+
+        if is_dataset_discovery_query(query):
+            return self._run_dataset_discovery(query)
+
         self.tracer.start_trace("agent_run", {"query": query})
         
         try:
@@ -64,11 +69,147 @@ class AgentOrchestrator:
             final_response = self._final_synthesis(results, query)
             
             self.tracer.end_trace("agent_run", {"final_response": final_response})
-            return final_response, self.tracer.get_traces()
+            return final_response, self.tracer.get_traces(), None
             
         except Exception as e:
             self.tracer.log_error("agent_run", str(e))
-            return f"Error: {str(e)}", self.tracer.get_traces()
+            return f"Error: {str(e)}", self.tracer.get_traces(), None
+
+    def _run_dataset_discovery(self, query: str) -> tuple[str, List[Dict], Dict[str, Any]]:
+        """Run the ontology-grounded dataset discovery vertical with explicit trace steps."""
+        from agent import dataset_discovery as pipeline
+
+        self.tracer.start_trace("agent_run", {"query": query, "mode": "dataset_discovery"})
+
+        try:
+            interpreted = pipeline.interpret_query(query)
+            self.tracer.log_step(
+                "interpret_query",
+                {
+                    "label": "Interpret Query",
+                    "description": "Extract disease, tissue, assay, and organism facets from the query",
+                    "interpreted_query": interpreted.model_dump(),
+                },
+            )
+
+            concept_mappings = pipeline.ground_query(interpreted)
+            self.tracer.log_step(
+                "ground_query",
+                {
+                    "label": "Ground Query",
+                    "description": "Map requested facets to ontology concepts via OLS/BioPortal with curated fallback",
+                    "concept_mappings": [m.model_dump() for m in concept_mappings],
+                    "mapping_count": len(concept_mappings),
+                },
+            )
+
+            search_result = pipeline.search_repository(
+                concept_mappings,
+                query=query,
+                interpreted_query=interpreted,
+            )
+            self.tracer.log_step(
+                "search_repository",
+                {
+                    "label": "Search Repository",
+                    "description": "Run multi-strategy GEO search using grounded labels and synonyms",
+                    "repository": search_result.get("repository", "GEO"),
+                    "search_term": search_result.get("search_term", ""),
+                    "search_strategies": search_result.get("search_strategies", []),
+                    "total_found": search_result.get("total_found", 0),
+                    "primary_total_found": search_result.get("primary_total_found"),
+                    "max_results": search_result.get("max_results"),
+                    "has_more": search_result.get("has_more", False),
+                    "record_count": len(search_result.get("records", [])),
+                    "source": search_result.get("source", "NCBI GEO"),
+                    "error": search_result.get("error"),
+                },
+            )
+
+            candidates = pipeline.normalize_records(search_result.get("records", []))
+            self.tracer.log_step(
+                "normalize_records",
+                {
+                    "label": "Normalize Records",
+                    "description": "Convert GEO-specific API responses into shared DatasetCandidate records",
+                    "repository": search_result.get("repository", "GEO"),
+                    "input_records": len(search_result.get("records", [])),
+                    "candidate_count": len(candidates),
+                },
+            )
+
+            annotated = pipeline.annotate_evidence(candidates, concept_mappings)
+            evidence_snippet_count = sum(len(c.evidence_snippets) for c in annotated)
+            self.tracer.log_step(
+                "annotate_evidence",
+                {
+                    "label": "Annotate Evidence",
+                    "description": "Identify metadata fields that support facet matches and collect evidence snippets",
+                    "candidate_count": len(annotated),
+                    "evidence_snippet_count": evidence_snippet_count,
+                    "warning_count": sum(len(c.metadata_warnings) for c in annotated),
+                },
+            )
+
+            ranked = pipeline.rank_results(annotated, concept_mappings)
+            self.tracer.log_step(
+                "rank_results",
+                {
+                    "label": "Rank Results",
+                    "description": "Score candidates by evidence coverage; do not inherit requested facets without evidence",
+                    "candidate_count": len(ranked),
+                    "full_matches": sum(1 for c in ranked if c.match_status == "full"),
+                    "full_with_warnings_matches": sum(
+                        1 for c in ranked if c.match_status == "full_with_warnings"
+                    ),
+                    "partial_matches": sum(1 for c in ranked if c.match_status == "partial"),
+                    "ambiguous_or_mixed_matches": sum(
+                        1 for c in ranked if c.match_status == "ambiguous_or_mixed"
+                    ),
+                    "top_accessions": [c.accession for c in ranked[:5]],
+                },
+            )
+
+            from domain.dataset_search import DatasetSearchCursor, DatasetSearchResult
+
+            result = DatasetSearchResult(
+                query=query,
+                interpreted_query=interpreted,
+                concept_mappings=concept_mappings,
+                candidates=ranked,
+                total_found=search_result.get("total_found", len(ranked)),
+                primary_total_found=search_result.get("primary_total_found"),
+                max_results=search_result.get("max_results"),
+                source=search_result.get("source", "NCBI GEO"),
+                repository=search_result.get("repository", "GEO"),
+                search_term=search_result.get("search_term") or None,
+                search_strategies=search_result.get("search_strategies", []),
+                has_more=search_result.get("has_more", False),
+                retrieved_count=len(ranked),
+                load_more_cursor=(
+                    DatasetSearchCursor.model_validate(search_result["load_more_cursor"])
+                    if search_result.get("load_more_cursor")
+                    else None
+                ),
+            )
+            result_payload = pipeline.dataset_search_result_payload(result)
+            final_response = self._format_dataset_search_response(result)
+
+            self.tracer.log_step(
+                "respond",
+                {
+                    "label": "Respond",
+                    "description": "Render ranked dataset results, warnings, and structured dataset_search payload",
+                    "candidate_count": len(ranked),
+                    "response_preview": final_response[:240],
+                },
+            )
+            self.tracer.end_trace("agent_run", {"final_response": final_response})
+            return final_response, self.tracer.get_traces(), result_payload
+
+        except Exception as e:
+            self.tracer.log_error("agent_run", str(e))
+            return f"Error: {str(e)}", self.tracer.get_traces(), None
     
     def _plan(self, query: str) -> Dict[str, Any]:
         """Create an initial plan based on the query"""
@@ -558,3 +699,31 @@ class AgentOrchestrator:
         if isinstance(data, dict) and data.get("error"):
             return f"{index}. **{label}**: {data['error']}\n\n"
         return f"{index}. **{label}**: {data}\n\n"
+
+    def _format_dataset_search_response(self, result) -> str:
+        """Brief chat summary; full details live in the structured dataset_search payload."""
+        if not result.candidates:
+            if result.total_found:
+                return (
+                    f"GEO search found {result.total_found} potential matches, "
+                    "but record retrieval failed or returned no usable metadata. "
+                    "See details below, or try again after setting PUBMED_EMAIL for NCBI rate limits."
+                )
+            return f"No matching datasets were found ({result.total_found} raw GEO hits). See details below."
+
+        count = len(result.candidates)
+        dataset_word = "dataset" if count == 1 else "datasets"
+        total = result.total_found or count
+        if total > count:
+            limit_note = ""
+            if result.max_results:
+                limit_note = f" (GEO_MAX_RESULTS={result.max_results})"
+            return (
+                f"Showing {count} of {total:,} GEO hits{limit_note} — "
+                f"{count} ranked {dataset_word} by evidence. "
+                "See ranked results below for match status and export context."
+            )
+        return (
+            f"Found {count} ranked {dataset_word} from {result.source}. "
+            "See ranked results below for evidence, match status, and export context."
+        )
