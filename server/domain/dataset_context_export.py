@@ -4,7 +4,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from .dataset_search import ConceptMapping, DatasetCandidate, DatasetSearchResult
+from .dataset_search import (
+    AccessSummary,
+    ConceptMapping,
+    DataAccessReference,
+    DatasetCandidate,
+    DatasetSearchResult,
+)
 
 BASE_DOWNSTREAM_CAUTION = (
     "Inspect sample-level metadata before assuming case/control design."
@@ -32,8 +38,18 @@ def _concept_to_dict(mapping: ConceptMapping) -> dict[str, Any]:
     return payload
 
 
+def _access_reference_to_dict(reference: DataAccessReference) -> dict[str, Any]:
+    return reference.model_dump()
+
+
+def _access_summary_to_dict(summary: AccessSummary | None) -> dict[str, Any] | None:
+    if summary is None:
+        return None
+    return summary.model_dump()
+
+
 def _candidate_to_dict(candidate: DatasetCandidate, rank: int) -> dict[str, Any]:
-    return {
+    payload = {
         "rank": rank,
         "accession": candidate.accession,
         "title": candidate.title,
@@ -76,6 +92,12 @@ def _candidate_to_dict(candidate: DatasetCandidate, rank: int) -> dict[str, Any]
             candidate.score_breakdown.model_dump() if candidate.score_breakdown else None
         ),
     }
+    if candidate.access_summary is not None or candidate.access_references:
+        payload["access_summary"] = _access_summary_to_dict(candidate.access_summary)
+        payload["access_references"] = [
+            _access_reference_to_dict(reference) for reference in candidate.access_references
+        ]
+    return payload
 
 
 def build_downstream_cautions(result: DatasetSearchResult) -> list[str]:
@@ -314,6 +336,35 @@ def _format_candidate_markdown(candidate: DatasetCandidate, rank: int) -> str:
             if snippet.matched_concepts:
                 concept_note = f" (matched: {', '.join(snippet.matched_concepts)})"
             lines.append(f"  - `{snippet.field}`: {snippet.text}{concept_note}")
+
+    if candidate.access_summary or candidate.access_references:
+        lines.append("- **Access summary**:")
+        summary = candidate.access_summary
+        if summary:
+            if summary.text:
+                lines.append(f"  - {summary.text}")
+            if summary.repository_page_url:
+                lines.append(f"  - repository page: {summary.repository_page_url}")
+            if summary.direct_downloads_available is not None:
+                lines.append(
+                    f"  - direct downloads: {'yes' if summary.direct_downloads_available else 'no'}"
+                )
+            if summary.auth_may_be_required is not None:
+                lines.append(
+                    "  - authentication: "
+                    f"{'may be required' if summary.auth_may_be_required else 'not indicated'}"
+                )
+        if candidate.access_references:
+            lines.append("- **Access references**:")
+            for reference in candidate.access_references:
+                ref_line = f"  - {reference.label} [{reference.access_type}]"
+                if reference.url:
+                    ref_line += f": {reference.url}"
+                if reference.requires_auth:
+                    ref_line += " (auth may be required)"
+                if reference.notes:
+                    ref_line += f" — {reference.notes}"
+                lines.append(ref_line)
 
     return "\n".join(lines)
 

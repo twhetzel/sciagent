@@ -1,6 +1,14 @@
 import { useState } from 'react'
+import AccessManifestPanel from './AccessManifestPanel.jsx'
 import DatasetActionBar from './DatasetActionBar.jsx'
+import DatasetAccessSection from './DatasetAccessSection.jsx'
 import DatasetLoadMoreSkeleton from './DatasetLoadMoreSkeleton.jsx'
+import {
+  formatTriState,
+  getAccessReferenceCount,
+  resolveAccessSummary,
+  triStateLabel,
+} from '../utils/datasetAccess.js'
 import { FacetStatusInfoTooltip, FacetStatusLabelTooltip } from './FacetStatusTooltip.jsx'
 import {
   buildFacetSummary,
@@ -362,13 +370,114 @@ function ScoreBreakdownPanel({ breakdown }) {
   )
 }
 
-function DatasetCard({ candidate, rank, isNew, conceptMappings }) {
+function DatasetAccessSummaryStrip({ candidate }) {
+  const summary = resolveAccessSummary(candidate)
+  const referenceCount = getAccessReferenceCount(candidate)
+  const repositoryUrl = summary.repository_page_url
+
+  const directDownloadsLabel = formatTriState(
+    triStateLabel(summary.direct_downloads_available),
+    { yes: 'Yes', no: 'No', unknown: 'Unknown' },
+  )
+  const authLabel = formatTriState(triStateLabel(summary.auth_may_be_required), {
+    yes: 'May be required',
+    no: 'Not indicated',
+    unknown: 'Unknown',
+  })
+
+  return (
+    <div className="dataset-access-summary" aria-label="Access summary">
+      <p className="dataset-access-summary-text">{summary.text}</p>
+      <dl className="dataset-access-summary-meta">
+        <div>
+          <dt>Repository page</dt>
+          <dd>
+            {repositoryUrl ? (
+              <a href={repositoryUrl} target="_blank" rel="noreferrer">
+                View study page
+              </a>
+            ) : (
+              'Not available'
+            )}
+          </dd>
+        </div>
+        <div>
+          <dt>Access references</dt>
+          <dd>{referenceCount}</dd>
+        </div>
+        <div>
+          <dt>Direct downloads</dt>
+          <dd>{directDownloadsLabel}</dd>
+        </div>
+        <div>
+          <dt>Authentication</dt>
+          <dd>{authLabel}</dd>
+        </div>
+      </dl>
+    </div>
+  )
+}
+
+function DatasetAccessActions({
+  candidate,
+  manifestSelected,
+  accessExpanded,
+  onToggleAccessDetails,
+  onToggleManifest,
+}) {
+  const repositoryUrl = resolveAccessSummary(candidate).repository_page_url
+
+  return (
+    <div className="dataset-access-actions">
+      <button
+        type="button"
+        className="dataset-access-action-button"
+        onClick={onToggleAccessDetails}
+        aria-expanded={accessExpanded}
+      >
+        {accessExpanded ? 'Hide access details' : 'View access details'}
+      </button>
+      {repositoryUrl ? (
+        <a
+          className="dataset-access-action-link"
+          href={repositoryUrl}
+          target="_blank"
+          rel="noreferrer"
+        >
+          Open repository page
+        </a>
+      ) : (
+        <span className="dataset-access-action-link dataset-access-action-link--disabled">
+          Open repository page
+        </span>
+      )}
+      <button
+        type="button"
+        className={`dataset-access-action-button dataset-access-action-button--manifest${manifestSelected ? ' is-selected' : ''}`}
+        onClick={onToggleManifest}
+        aria-pressed={manifestSelected}
+      >
+        {manifestSelected ? 'Remove from manifest' : 'Add to manifest'}
+      </button>
+    </div>
+  )
+}
+
+function DatasetCard({
+  candidate,
+  rank,
+  isNew,
+  conceptMappings,
+  manifestSelected,
+  onToggleManifest,
+}) {
+  const [accessExpanded, setAccessExpanded] = useState(false)
   const requestedAssayLabel = requestedAssay(candidate)
   const assayMatched = candidate.matched_concepts?.some((mapping) => mapping.slot === 'assay')
 
   return (
     <article
-      className={`dataset-card dataset-card--${candidate.match_status || 'partial'}${isNew ? ' dataset-card--new' : ''}`}
+      className={`dataset-card dataset-card--${candidate.match_status || 'partial'}${isNew ? ' dataset-card--new' : ''}${manifestSelected ? ' dataset-card--manifest-selected' : ''}`}
       data-candidate-rank={rank}
     >
       <header className="dataset-card-header">
@@ -479,6 +588,17 @@ function DatasetCard({ candidate, rank, isNew, conceptMappings }) {
       )}
 
       <EvidenceList evidence={candidate.evidence_snippets} />
+
+      <DatasetAccessSummaryStrip candidate={candidate} />
+      <DatasetAccessActions
+        candidate={candidate}
+        manifestSelected={manifestSelected}
+        accessExpanded={accessExpanded}
+        onToggleAccessDetails={() => setAccessExpanded((value) => !value)}
+        onToggleManifest={onToggleManifest}
+      />
+      <DatasetAccessSection candidate={candidate} expanded={accessExpanded} />
+
       <ScoreBreakdownPanel breakdown={candidate.score_breakdown} />
     </article>
   )
@@ -587,6 +707,8 @@ export default function DatasetResultsPanel({
   loading,
   loadMoreNotice,
   onLoadMore,
+  manifestSelectedAccessions,
+  onToggleManifestSelection,
 }) {
   if (!datasetSearch) return null
 
@@ -664,6 +786,12 @@ export default function DatasetResultsPanel({
         onLoadMore={onLoadMore}
       />
 
+      <AccessManifestPanel
+        candidates={candidates}
+        selectedAccessions={manifestSelectedAccessions}
+        datasetSearch={datasetSearch}
+      />
+
       <section className="dataset-results-list-section" aria-label="Ranked datasets">
         <div className="dataset-list-header">
           <strong>Ranked datasets</strong>
@@ -678,6 +806,8 @@ export default function DatasetResultsPanel({
                 rank={index + 1}
                 isNew={newFromRank != null && index + 1 >= newFromRank}
                 conceptMappings={mappings}
+                manifestSelected={manifestSelectedAccessions?.has(candidate.accession) ?? false}
+                onToggleManifest={() => onToggleManifestSelection?.(candidate.accession)}
               />
             ))}
             {loadingMore ? <DatasetLoadMoreSkeleton count={2} /> : null}

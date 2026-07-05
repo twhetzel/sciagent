@@ -7,6 +7,7 @@ from __future__ import annotations
 from collections import defaultdict
 
 from domain.dataset_annotation import annotate_dataset_candidates
+from domain.dataset_access_discovery import enrich_candidates_with_access
 from domain.dataset_context_export import export_dataset_search_agent_context
 from domain.dataset_search import (
     DatasetCandidate,
@@ -239,6 +240,11 @@ def rank_results(candidates, concept_mappings):
     return rank_annotated_candidates(candidates, concept_mappings)
 
 
+def discover_access(candidates: list[DatasetCandidate]) -> list[DatasetCandidate]:
+    """Step 7: discover repository access links and summaries for ranked candidates."""
+    return enrich_candidates_with_access(candidates)
+
+
 def resolve_max_results(repository: str, max_results: int | None = None) -> int:
     if repository == GEO_REPOSITORY:
         return get_geo_max_results(max_results)
@@ -319,6 +325,7 @@ def run_dataset_discovery(
 
     annotated = annotate_evidence(candidates, concept_mappings)
     ranked = rank_results(annotated, concept_mappings)
+    ranked = discover_access(ranked)
     return _build_dataset_search_result(
         query=query,
         interpreted=interpreted,
@@ -354,6 +361,7 @@ def load_more_dataset_search(
     new_annotated = annotate_evidence(new_candidates, cursor.concept_mappings)
     merged = list(existing_candidates) + new_annotated
     ranked = rank_results(merged, cursor.concept_mappings)
+    ranked = discover_access(ranked)
 
     cursor_payload = more_result.get("load_more_cursor")
     updated_cursor = (

@@ -137,6 +137,41 @@ class InterpretedQuery(BaseModel):
     organism: str | None = None
 
 
+class DataAccessReference(BaseModel):
+    """Lightweight link to a repository page, API endpoint, or discoverable file path."""
+
+    id: str = Field(..., description="Stable identifier within the candidate access list")
+    label: str = Field(..., description="Human-readable reference label")
+    url: str = Field(default="", description="HTTP(S) or FTP URL when available")
+    access_type: str = Field(
+        default="unknown",
+        description=(
+            "repository_page, direct_download, api, ftp, controlled, or unknown"
+        ),
+    )
+    requires_auth: bool = Field(
+        default=False,
+        description="Whether access may require authentication or controlled approval",
+    )
+    notes: str = Field(default="", description="Short note about what this reference provides")
+
+
+class AccessSummary(BaseModel):
+    """Aggregate access signals for a dataset candidate."""
+
+    text: str = Field(default="", description="One-line access summary for UI display")
+    repository_page_url: str = Field(default="", description="Canonical study landing page")
+    reference_count: int = Field(default=0, description="Number of discovered access references")
+    direct_downloads_available: bool | None = Field(
+        default=None,
+        description="True when direct download links were discovered; null if unknown",
+    )
+    auth_may_be_required: bool | None = Field(
+        default=None,
+        description="True when any reference may require authentication",
+    )
+
+
 class DatasetCandidate(BaseModel):
     """Repository-agnostic dataset record with match evidence and score."""
 
@@ -193,6 +228,14 @@ class DatasetCandidate(BaseModel):
     score_breakdown: ScoreBreakdown | None = Field(
         default=None,
         description="Developer/debug audit of ranking inputs and evidence",
+    )
+    access_summary: AccessSummary | None = Field(
+        default=None,
+        description="Discovered access summary for UI and manifest export",
+    )
+    access_references: list[DataAccessReference] = Field(
+        default_factory=list,
+        description="Discovered repository, API, FTP, and file access references",
     )
 
 

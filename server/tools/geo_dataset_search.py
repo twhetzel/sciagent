@@ -167,6 +167,12 @@ def normalize_geo_record(
         ptechtype=record.get("ptechtype"),
         sample_titles=_sample_titles(record),
     )
+    if record.get("ftplink"):
+        metadata_fields["geo_ftplink"] = str(record["ftplink"])
+    if record.get("suppfile"):
+        metadata_fields["geo_suppfile"] = str(record["suppfile"])
+    if record.get("bioproject"):
+        metadata_fields["geo_bioproject"] = str(record["bioproject"])
 
     return DatasetCandidate(
         repository=GEO_REPOSITORY,

@@ -16,6 +16,7 @@ export default function App() {
   const [loadingMore, setLoadingMore] = useState(false)
   const [loadMoreNotice, setLoadMoreNotice] = useState(null)
   const [newFromRank, setNewFromRank] = useState(null)
+  const [manifestSelectedAccessions, setManifestSelectedAccessions] = useState(() => new Set())
   const [error, setError] = useState(null)
   const scrollRef = useRef(null)
   const loadMoreNoticeTimerRef = useRef(null)
@@ -56,6 +57,7 @@ export default function App() {
     setError(null)
     setLoadMoreNotice(null)
     setNewFromRank(null)
+    setManifestSelectedAccessions(new Set())
     setMessages((prev) => [...prev, { role: 'user', content: query }])
 
     try {
@@ -121,6 +123,18 @@ export default function App() {
     }
   }, [datasetSearch])
 
+  const handleToggleManifestSelection = useCallback((accession) => {
+    setManifestSelectedAccessions((prev) => {
+      const next = new Set(prev)
+      if (next.has(accession)) {
+        next.delete(accession)
+      } else {
+        next.add(accession)
+      }
+      return next
+    })
+  }, [])
+
   return (
     <div className="app-shell">
       <header className="top-bar">
@@ -161,6 +175,8 @@ export default function App() {
                 loading={loading}
                 loadMoreNotice={loadMoreNotice}
                 onLoadMore={handleLoadMore}
+                manifestSelectedAccessions={manifestSelectedAccessions}
+                onToggleManifestSelection={handleToggleManifestSelection}
               />
             </div>
           ) : (

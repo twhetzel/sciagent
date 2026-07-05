@@ -209,6 +209,7 @@ class AgentOrchestrator:
             )
 
             ranked = pipeline.rank_results(annotated, concept_mappings)
+            ranked = pipeline.discover_access(ranked)
             self.tracer.log_step(
                 "rank_results",
                 {
