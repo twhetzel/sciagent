@@ -59,9 +59,10 @@ Queries like `BRCA1 gene`, `marfan syndrome variants`, or `Find RNA-seq datasets
 
 | Tool | Data source | Auth |
 |------|-------------|------|
-| `pubmed` | NCBI E-utilities (PubMed) | `PUBMED_EMAIL`, `PUBMED_TOOL` recommended |
+| `pubmed` | NCBI E-utilities (PubMed) | `NCBI_EMAIL`, `PUBMED_TOOL` recommended; `PUBMED_EMAIL` fallback |
 | `openalex` | OpenAlex REST API | Optional `OPENALEX_EMAIL` |
 | `europepmc` | Europe PMC REST API | None |
+| `expression_atlas` | EMBL-EBI Expression Atlas (EBI Search + GXA JSON API) | None; dataset-discovery pipeline when GEO is excluded or for routed dataset queries |
 | `mygene` | MyGene.info v3 | None |
 | `uniprot` | UniProt REST | None |
 | `clinvar` | NCBI E-utilities (ClinVar) | Same NCBI env vars as PubMed |
@@ -70,7 +71,7 @@ Queries like `BRCA1 gene`, `marfan syndrome variants`, or `Find RNA-seq datasets
 | `summarize` | OpenAI / Anthropic | `OPENAI_API_KEY` and/or `ANTHROPIC_API_KEY` |
 | *(post-processing)* | OLS / BioPortal / Claude | Optional `BIOPORTAL_API_KEY`, `ANTHROPIC_API_KEY` for ontology normalization |
 
-See [How the orchestrator works](#how-the-orchestrator-works-no-llm-required) for the full routing model. On the standard agent path, `tools/ontology_normalizer.py` runs after tools finish and appears in the trace as **Normalize (tool results)**. Dataset discovery queries use a separate seven-step pipeline documented below.
+See [How the orchestrator works](#how-the-orchestrator-works-no-llm-required) for the full routing model. To add a new source, follow [docs/adding-a-source.md](docs/adding-a-source.md). On the standard agent path, `tools/ontology_normalizer.py` runs after tools finish and appears in the trace as **Normalize (tool results)**. Dataset discovery queries use a separate seven-step pipeline documented below.
 
 ## Example queries
 
@@ -85,6 +86,9 @@ SciAgent Studio routes queries based on keywords and simple entity extraction (g
 | `TP53 variants` | MyGene, UniProt, ClinVar | Gene/protein info plus ClinVar variant list |
 | `marfan syndrome variants` | PubMed, OpenAlex, Europe PMC, ClinVar | Literature + ClinVar condition search (disease term extracted as `marfan`) |
 | `breast cancer literature` | PubMed, OpenAlex, Europe PMC | Normalized article hits from three literature sources |
+| `ulcerative colitis gene expression` | Expression Atlas | Ranked Expression Atlas experiments with accession, species, and type |
+| `Find public RNA-seq datasets for ulcerative colitis colon tissue` | GEO + Expression Atlas dataset discovery (merged, de-duped when both enabled) | Ranked dataset panel with facets, evidence snippets, and per-repository strategy trace |
+| `TP53 expression atlas` | MyGene, UniProt, Expression Atlas | Gene/protein metadata plus matching Atlas experiments |
 | `search articles on cystic fibrosis` | PubMed, OpenAlex, Europe PMC | Literature results (disease keyword triggers literature tools) |
 | `AlphaFold structure for EGFR` | AlphaFold, UniProt | Structure confidence, PDB URL, protein metadata |
 | `Summarize BRCA1 gene` | MyGene, UniProt, summarize | Requires `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` for the summarize step |
@@ -107,7 +111,7 @@ These queries use a dedicated trace path and **do not** call `ontology_normalize
 | **Search Repository** | Search GEO using grounded labels and synonyms |
 | **Normalize Records** | Convert GEO API payloads into shared `DatasetCandidate` records |
 | **Annotate Evidence** | Identify metadata fields that support facet matches; collect evidence snippets |
-| **Rank Results** | Score candidates by evidence coverage (requested facets are not inherited without evidence) |
+| **Rank Results** | Score and order candidates by evidence (`evidence_score`) and match tier (`display_rank_score`); see [dataset ranking](docs/dataset-ranking.md) |
 | **Respond** | Render chat response, structured `dataset_search` payload, and warnings |
 
 | Question | What you should see |
@@ -263,6 +267,8 @@ uv sync
 PYTHONPATH=. uv run uvicorn sciagent_server.main:app --reload --port 8000
 ```
 
+Edit `.env` and set **`NCBI_EMAIL`** to your contact address. NCBI requires this for E-utilities requests (PubMed, ClinVar, GEO, and related tools). `PUBMED_EMAIL` is still accepted as a fallback. Add **`NCBI_API_KEY`** from [NCBI account settings](https://www.ncbi.nlm.nih.gov/account/settings/) for a higher rate limit (recommended for GEO dataset search and production).
+
 Or from the repo root:
 
 ```bash
@@ -290,6 +296,16 @@ docker compose up --build
 
 - UI: http://localhost:8080
 - API: http://localhost:8000/api/health
+
+## Developer evaluation (golden queries)
+
+Regression harness for integrated GEO + Expression Atlas dataset discovery (not exposed in the UI). Runs four fixed RNA-seq queries, reports interpretation, grounding, per-source hits, top-10 ranking (`display_rank_score`, `evidence_score`, `rank_tier`, assay sub-tiers), and fails on assay-ranking violations (e.g. proteomics partials above RNA-seq-supported partials).
+
+```bash
+./scripts/run_golden_queries.sh
+```
+
+See [docs/evaluation/golden_queries.md](docs/evaluation/golden_queries.md) for metrics, NCBI setup, and pytest commands. Scoring and rank tiers are documented in [docs/dataset-ranking.md](docs/dataset-ranking.md).
 
 ## API
 
@@ -350,8 +366,8 @@ Each trace document includes:
 |------|-------------|
 | `interpret_query` | *(dataset discovery)* **Interpret Query** — extracted disease, tissue, assay, organism |
 | `ground_query` | *(dataset discovery)* **Ground Query** — curated aliases/cache plus ontology lookup providers |
-| `search_repository` | *(dataset discovery)* **Search Repository** — GEO search using grounded synonyms |
-| `normalize_records` | *(dataset discovery)* **Normalize Records** — GEO payloads → `DatasetCandidate` |
+| `search_repository` | *(dataset discovery)* **Search Repository** — GEO or Expression Atlas search using grounded synonyms |
+| `normalize_records` | *(dataset discovery)* **Normalize Records** — repository payloads → `DatasetCandidate` |
 | `annotate_evidence` | *(dataset discovery)* **Annotate Evidence** — field-level concept/evidence matching |
 | `rank_results` | *(dataset discovery)* **Rank Results** — evidence-based scoring |
 | `respond` | *(dataset discovery)* **Respond** — rendered answer and structured results |
@@ -369,11 +385,16 @@ The React trace panel renders these as a color-coded timeline instead of raw JSO
 
 See [`.env.example`](.env.example). Key variables:
 
+**NCBI E-utilities:** set `NCBI_EMAIL` before using PubMed, ClinVar, or GEO dataset search (see setup above). Without it, NCBI may rate-limit or reject requests.
+
 | Variable | Purpose |
 |----------|---------|
 | `SCIAGENT_HOST` / `SCIAGENT_PORT` | API bind address |
 | `SCIAGENT_CORS_ORIGINS` | Allowed browser origins (comma-separated) |
-| `PUBMED_EMAIL` | NCBI politeness for PubMed/ClinVar/GEO |
+| `SCIAGENT_EXCLUDED_SOURCES` | Optional blocklist of external data sources to skip (`pubmed`, `openalex`, `europepmc`, `expression_atlas`, `mygene`, `uniprot`, `clinvar`, `alphafold`, `geo_dataset_search`). Excluding `geo_dataset_search` routes dataset-style queries to Expression Atlas only; with both enabled, GEO and GXA results are merged and de-duplicated. |
+| `SCIAGENT_EXCLUDED_TOOLS` | Optional blocklist of agent tools to skip (`summarize`) |
+| `NCBI_EMAIL` | **Recommended.** Contact email for NCBI E-utilities (PubMed, ClinVar, GEO); `PUBMED_EMAIL` fallback |
+| `NCBI_API_KEY` | Optional NCBI API key for higher E-utilities rate limits |
 | `GEO_MAX_RESULTS` | Max GEO records to retrieve and rank per dataset-discovery query (default `15`, cap `200`) |
 | `OPENALEX_EMAIL` | OpenAlex `mailto` parameter |
 | `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | Optional summarization and ontology tier 3 |
@@ -386,9 +407,13 @@ See [`.env.example`](.env.example). Key variables:
 1. Create a **Web Service** from this repo.
 2. Use the root `Dockerfile` or run:
    `cd server && uv sync && PYTHONPATH=. uv run uvicorn sciagent_server.main:app --host 0.0.0.0 --port $PORT`
-3. Set environment variables from `.env.example`.
+3. Set environment variables from `.env.example`. At minimum for GEO/PubMed/ClinVar:
+   - `NCBI_EMAIL` (required by NCBI policy)
+   - `NCBI_API_KEY` (strongly recommended — shared by the web app and all NCBI tools; not stored in the frontend)
 4. Health check path: `/api/health`
 5. Increase request timeout to **120s** for multi-tool queries.
+
+The web app does **not** use the golden-query `--pause-between-queries` setting. Each user query is throttled inside `geo_dataset_search` (~3 req/s without a key, ~10 req/s with `NCBI_API_KEY`) and retries on HTTP 429. The pause flag is only for the developer harness when running several evaluation queries back-to-back from your laptop.
 
 ### Vercel (frontend)
 

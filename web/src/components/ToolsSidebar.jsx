@@ -5,6 +5,7 @@ const TOOL_ICONS = {
   pubmed: '📄',
   openalex: '📚',
   europepmc: '📰',
+  expression_atlas: '🧫',
   mygene: '🧬',
   uniprot: '🧪',
   clinvar: '⚕️',

@@ -3,6 +3,10 @@ function formatCount(value) {
   return Number(value).toLocaleString()
 }
 
+function repositoryLabel(datasetSearch) {
+  return datasetSearch?.repository || 'repository'
+}
+
 export default function DatasetActionBar({
   datasetSearch,
   loadingMore,
@@ -11,6 +15,7 @@ export default function DatasetActionBar({
 }) {
   if (!datasetSearch) return null
 
+  const repository = repositoryLabel(datasetSearch)
   const retrieved = datasetSearch.retrieved_count ?? datasetSearch.candidates?.length ?? 0
   const total = datasetSearch.total_found ?? retrieved
   const batchSize = datasetSearch.max_results || 15
@@ -21,7 +26,7 @@ export default function DatasetActionBar({
       <div className="dataset-action-bar-summary">
         <strong>
           {formatCount(retrieved)} ranked
-          {total > retrieved ? ` · ${formatCount(total)} GEO hits` : ''}
+          {total > retrieved ? ` · ${formatCount(total)} ${repository} hits` : ''}
         </strong>
         {datasetSearch.primary_total_found != null &&
         datasetSearch.primary_total_found !== total ? (
@@ -35,7 +40,7 @@ export default function DatasetActionBar({
         {loadingMore ? (
           <span className="dataset-action-bar-loading">
             <span className="dataset-action-bar-spinner" aria-hidden="true" />
-            Loading more from GEO…
+            Loading more from {repository}…
           </span>
         ) : null}
         {!loadingMore && loadMoreNotice ? (

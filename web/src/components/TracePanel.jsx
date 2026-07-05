@@ -186,13 +186,13 @@ function summarizeStep(name, data, steps, stepIndex) {
     case 'search_repository':
       return {
         title: data?.label || 'Search Repository',
-        summary: `${data?.record_count ?? 0} GEO record(s) retrieved (${data?.total_found ?? 0} total hits)`,
+        summary: `${data?.record_count ?? 0} ${data?.repository || 'repository'} record(s) retrieved (${data?.total_found ?? 0} total hits)`,
         chips: data?.repository ? [data.repository] : [],
       }
     case 'normalize_records':
       return {
         title: data?.label || 'Normalize Records',
-        summary: `${data?.candidate_count ?? 0} DatasetCandidate record(s) from ${data?.input_records ?? 0} GEO payload(s)`,
+        summary: `${data?.candidate_count ?? 0} DatasetCandidate record(s) from ${data?.input_records ?? 0} ${data?.repository || 'repository'} payload(s)`,
         chips: data?.repository ? [data.repository] : [],
       }
     case 'annotate_evidence':
@@ -228,9 +228,10 @@ function summarizeToolResult(data) {
   const payload = data?.data
   if (!payload || typeof payload !== 'object') return 'Completed'
 
-  if (data?.tool === 'geo_dataset_search') {
+  if (data?.tool === 'geo_dataset_search' || data?.tool === 'expression_atlas') {
     const count = payload.candidate_count ?? payload.total_found
-    return count != null ? `Found ${count} GEO dataset(s)` : 'GEO search completed'
+    const repo = payload.repository || (data?.tool === 'geo_dataset_search' ? 'GEO' : 'Expression Atlas')
+    return count != null ? `Found ${count} ${repo} dataset(s)` : `${repo} search completed`
   }
   if (payload.results && Array.isArray(payload.results)) {
     return `Found ${payload.results.length} result(s)`
