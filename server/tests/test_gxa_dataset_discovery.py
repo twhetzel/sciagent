@@ -84,7 +84,7 @@ def test_run_dataset_discovery_gxa_returns_ranked_candidates():
 
     with patch("agent.dataset_discovery.ground_interpreted_query", return_value=_uc_mappings()):
         with patch(
-            "agent.dataset_discovery.fetch_gxa_repository_records",
+            "agent.dataset_discovery.fetch_repository_records",
             return_value=MOCK_SEARCH_RESULT,
         ):
             result = run_dataset_discovery(query, repository=GXA_REPOSITORY, max_results=10)

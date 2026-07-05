@@ -43,6 +43,8 @@ GENERIC_PHRASES = frozenset(
 )
 
 MAX_PHRASE_WORDS = 5
+MIN_SINGLE_WORD_DYNAMIC_LENGTH = 4
+SINGLE_WORD_DYNAMIC_SLOTS = frozenset({"disease", "assay"})
 
 
 def _filled_facet_values(interpreted: InterpretedQuery) -> set[str]:
@@ -168,8 +170,16 @@ def resolve_phrase_facets(query: str, interpreted: InterpretedQuery) -> Interpre
                 if not allow_dynamic:
                     can_use_dynamic = False
                 elif len(_phrase_words(phrase)) == 1:
-                    # Single-word dynamic lookups are noisy; allow curated tissue anatomy terms.
-                    if slot != "tissue" or not curated_facet_lookup(slot, phrase):
+                    if slot == "tissue":
+                        if not curated_facet_lookup(slot, phrase):
+                            continue
+                    elif slot in SINGLE_WORD_DYNAMIC_SLOTS:
+                        normalized_phrase = _normalize_text(phrase)
+                        if len(normalized_phrase) < MIN_SINGLE_WORD_DYNAMIC_LENGTH:
+                            continue
+                        if normalized_phrase in BLOCKED_SHORT_ACRONYMS or _is_acronym_like(phrase):
+                            continue
+                    else:
                         continue
 
                 grounded, used_dynamic = ground_phrase_variants(
@@ -198,6 +208,4 @@ def resolve_phrase_facets(query: str, interpreted: InterpretedQuery) -> Interpre
         return interpreted
 
     merged = interpreted.model_copy(update=updates)
-    if merged.organism is None and (merged.disease or merged.tissue):
-        merged = merged.model_copy(update={"organism": "human"})
     return merged

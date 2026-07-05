@@ -14,7 +14,7 @@ def test_uc_colon_query_resolves_disease_and_builds_four_strategies():
     assert interpreted.disease == "UC"
     assert interpreted.tissue == "colon"
     assert interpreted.assay == "RNA-seq"
-    assert interpreted.organism == "human"
+    assert interpreted.organism is None
 
     mappings = enrich_concept_mappings(ground_interpreted_query(interpreted))
     strategies = build_geo_search_queries(mappings)

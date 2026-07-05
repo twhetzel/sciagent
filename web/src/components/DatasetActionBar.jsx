@@ -1,3 +1,8 @@
+import {
+  isImmPortTextBroadEnabled,
+  summarizeRetrievalCounts,
+} from '../utils/datasetSearchCopy.js'
+
 function formatCount(value) {
   if (value == null || Number.isNaN(Number(value))) return '0'
   return Number(value).toLocaleString()
@@ -18,16 +23,45 @@ export default function DatasetActionBar({
   const repository = repositoryLabel(datasetSearch)
   const retrieved = datasetSearch.retrieved_count ?? datasetSearch.candidates?.length ?? 0
   const total = datasetSearch.total_found ?? retrieved
+  const retrievableTotal = datasetSearch.retrievable_total
   const batchSize = datasetSearch.max_results || 15
-  const canLoadMore = datasetSearch.has_more && onLoadMore
+  const canLoadMore =
+    datasetSearch.has_more && datasetSearch.load_more_cursor && onLoadMore
+  const paginationGap =
+    !datasetSearch.has_more &&
+    retrievableTotal != null &&
+    total > retrievableTotal
+  const textBroadEnabled = isImmPortTextBroadEnabled(datasetSearch)
+  const { supplemental, facetRetrieved } = summarizeRetrievalCounts(datasetSearch)
 
   return (
     <div className="dataset-action-bar" aria-live="polite" aria-busy={loadingMore}>
       <div className="dataset-action-bar-summary">
         <strong>
           {formatCount(retrieved)} ranked
-          {total > retrieved ? ` · ${formatCount(total)} ${repository} hits` : ''}
+          {textBroadEnabled && !datasetSearch.has_more && supplemental > 0
+            ? ` · ${formatCount(facetRetrieved)} facet + ${formatCount(supplemental)} supplemental`
+            : null}
+          {textBroadEnabled && datasetSearch.has_more
+            ? ` · ${formatCount(total)} facet hits`
+            : null}
+          {!textBroadEnabled && datasetSearch.has_more && total > retrieved
+            ? ` · ${formatCount(total)} ${repository} facet hits`
+            : null}
+          {!textBroadEnabled && !datasetSearch.has_more && paginationGap
+            ? ` · ${formatCount(total)} reported, ${formatCount(retrievableTotal)} retrievable`
+            : !textBroadEnabled && !datasetSearch.has_more && total > retrieved
+              ? ` · ${formatCount(total)} ${repository} hits`
+              : null}
+          {textBroadEnabled && !datasetSearch.has_more && paginationGap
+            ? ` · ${formatCount(total)} facet reported, ${formatCount(retrievableTotal)} retrievable`
+            : null}
         </strong>
+        {textBroadEnabled && datasetSearch.has_more ? (
+          <span className="dataset-action-bar-meta">
+            Load more may include <code>text_broad</code> free-text supplement
+          </span>
+        ) : null}
         {datasetSearch.primary_total_found != null &&
         datasetSearch.primary_total_found !== total ? (
           <span className="dataset-action-bar-meta">
@@ -47,7 +81,10 @@ export default function DatasetActionBar({
           <span className="dataset-action-bar-success">
             Added {formatCount(loadMoreNotice.added)} dataset
             {loadMoreNotice.added === 1 ? '' : 's'} · now showing{' '}
-            {formatCount(loadMoreNotice.total)}
+            {formatCount(loadMoreNotice.total)} ranked
+            {textBroadEnabled && loadMoreNotice.total > total
+              ? ' (includes supplemental free-text beyond facet scope)'
+              : null}
           </span>
         ) : null}
       </div>

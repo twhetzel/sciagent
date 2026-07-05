@@ -12,6 +12,7 @@ from .tissue_anatomy import build_tissue_patterns
 DISEASE_PATTERNS = [
     (re.compile(r"ulcerative\s+colitis", re.I), "ulcerative colitis"),
     (re.compile(r"alzheimer(?:['\u2019]s)?\s+disease", re.I), "Alzheimer disease"),
+    (re.compile(r"\basthma\b", re.I), "asthma"),
 ]
 
 TISSUE_PATTERNS = build_tissue_patterns()
@@ -19,6 +20,7 @@ TISSUE_PATTERNS = build_tissue_patterns()
 ASSAY_PATTERNS = [
     (re.compile(r"rna[\s-]?seq(?:uencing)?", re.I), "RNA-seq"),
     (re.compile(r"transcriptome\s+profiling", re.I), "RNA-seq"),
+    (re.compile(r"flow\s+cytometry", re.I), "Flow Cytometry"),
 ]
 
 ORGANISM_PATTERNS = [
@@ -40,10 +42,6 @@ def interpret_dataset_query(query: str) -> InterpretedQuery:
     tissue = _first_match(TISSUE_PATTERNS, query)
     assay = _first_match(ASSAY_PATTERNS, query)
     organism = _first_match(ORGANISM_PATTERNS, query)
-
-    # Clinical tissue queries without an explicit organism default to human.
-    if organism is None and (disease or tissue):
-        organism = "human"
 
     interpreted = InterpretedQuery(
         disease=disease,

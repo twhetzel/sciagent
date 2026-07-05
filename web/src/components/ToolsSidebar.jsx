@@ -12,6 +12,7 @@ const TOOL_ICONS = {
   alphafold: '🔬',
   summarize: '✨',
   geo_dataset_search: '🗂️',
+  immport: '🛡️',
 }
 
 export default function ToolsSidebar({ activeTools = [] }) {

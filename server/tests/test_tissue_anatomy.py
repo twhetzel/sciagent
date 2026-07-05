@@ -42,7 +42,7 @@ def test_alzheimers_brain_golden_query_interprets_all_facets():
     assert interpreted.disease == "Alzheimer disease"
     assert interpreted.tissue == "brain"
     assert interpreted.assay == "RNA-seq"
-    assert interpreted.organism == "human"
+    assert interpreted.organism is None
 
 
 def test_alzheimers_brain_golden_query_grounds_tissue_to_uberon_with_safe_terms():
@@ -70,6 +70,7 @@ def test_anatomy_seed_count_matches_documented_terms():
         "cortex",
         "hippocampus",
         "blood",
+        "PBMC",
         "liver",
         "lung",
         "kidney",

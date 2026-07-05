@@ -41,6 +41,7 @@ registry = ToolRegistry()
 
 class QueryRequest(BaseModel):
     query: str = Field(..., min_length=1)
+    search_options: dict[str, Any] | None = None
 
 
 class QueryResponse(BaseModel):
@@ -70,9 +71,18 @@ def list_tools() -> list[dict[str, Any]]:
     return registry.list_tools()
 
 
+@app.get("/api/config")
+def get_config() -> dict[str, Any]:
+    return config.build_api_config()
+
+
 @app.post("/api/query", response_model=QueryResponse)
 def query(req: QueryRequest) -> QueryResponse:
-    response, traces, dataset_search = orchestrator.run(req.query)
+    search_options = config.resolve_dataset_search_options(req.search_options)
+    response, traces, dataset_search = orchestrator.run(
+        req.query,
+        search_options=search_options,
+    )
     return QueryResponse(
         response=response,
         traces=traces,
@@ -85,13 +95,22 @@ def dataset_search_load_more(
     req: DatasetSearchLoadMoreRequest,
 ) -> DatasetSearchLoadMoreResponse:
     from agent import dataset_discovery as pipeline
+    from domain.dataset_repository_registry import (
+        any_load_more_enabled,
+        get_repository_spec,
+        is_repository_tool_enabled,
+        resolve_repository_for_load_more,
+    )
     from domain.dataset_search import DatasetCandidate, DatasetSearchCursor
     from fastapi import HTTPException
 
-    if not registry.get_tool("geo_dataset_search"):
+    if not any_load_more_enabled(registry):
         raise HTTPException(
             status_code=403,
-            detail="Dataset discovery is disabled (geo_dataset_search is listed in SCIAGENT_EXCLUDED_SOURCES).",
+            detail=(
+                "Dataset load-more is disabled "
+                "(no paginated dataset repositories are enabled)."
+            ),
         )
 
     cursor = DatasetSearchCursor.model_validate(req.load_more_cursor)
@@ -99,10 +118,23 @@ def dataset_search_load_more(
     prior_count = len(existing)
 
     try:
+        repository = resolve_repository_for_load_more(cursor, existing)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if not is_repository_tool_enabled(registry, repository):
+        spec = get_repository_spec(repository)
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"{repository} load-more is disabled "
+                f"({spec.tool_name} is listed in SCIAGENT_EXCLUDED_SOURCES)."
+            ),
+        )
+
+    try:
         result = pipeline.load_more_dataset_search(cursor, existing)
     except RuntimeError as exc:
-        from fastapi import HTTPException
-
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     payload = pipeline.dataset_search_result_payload(result)

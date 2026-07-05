@@ -104,6 +104,19 @@ ANATOMY_TERMS: tuple[dict[str, Any], ...] = (
         "synonyms": ["skin", "cutaneous"],
     },
     {
+        "canonical": "PBMC",
+        "pattern": r"\bPBMCs?\b|peripheral\s+blood\s+mononuclear\s+cells?",
+        "curie": "UBERON:0000178",
+        "label": "PBMC",
+        "iri": "http://purl.obolibrary.org/obo/UBERON_0000178",
+        "synonyms": [
+            "PBMC",
+            "PBMCs",
+            "peripheral blood mononuclear cell",
+            "peripheral blood mononuclear cells",
+        ],
+    },
+    {
         "canonical": "tumor",
         "pattern": r"\b(?:tumor|tumour|tumors|tumours|neoplasm|neoplasms)\b",
         "curie": "UBERON:0000428",

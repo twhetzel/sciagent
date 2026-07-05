@@ -14,8 +14,11 @@ logger = logging.getLogger(__name__)
 
 GEO_REPOSITORY = "GEO"
 GXA_REPOSITORY = "Expression Atlas"
+IMMPORT_REPOSITORY = "ImmPort"
 GXA_JSON_BASE = "https://www.ebi.ac.uk/gxa/json/experiments"
 GXA_SITE_BASE = "https://www.ebi.ac.uk/gxa"
+IMMPORT_SEARCH_BASE = "https://www.immport.org/data/query/api/search/study"
+IMMPORT_STUDY_BASE = "https://www.immport.org/shared/study"
 REQUEST_TIMEOUT = 15
 
 ACCESS_TYPE_REPOSITORY = "repository_page"
@@ -281,6 +284,84 @@ def discover_gxa_access(candidate: DatasetCandidate) -> tuple[AccessSummary, lis
     return summary, references
 
 
+def discover_immport_access(candidate: DatasetCandidate) -> tuple[AccessSummary, list[DataAccessReference]]:
+    """Derive ImmPort repository and shared-data API references from study metadata."""
+    accession = candidate.accession.upper()
+    repository_url = candidate.url or f"{IMMPORT_STUDY_BASE}/{accession}"
+    metadata = candidate.source_metadata or candidate.metadata_fields
+    references: list[DataAccessReference] = []
+
+    references.append(
+        _reference(
+            ref_id=f"{accession}-repository-page",
+            label=f"ImmPort study page ({accession})",
+            url=repository_url,
+            access_type=ACCESS_TYPE_REPOSITORY,
+            notes="Primary ImmPort shared study overview page.",
+        )
+    )
+
+    references.append(
+        _reference(
+            ref_id=f"{accession}-shared-search-api",
+            label=f"ImmPort shared search API ({accession})",
+            url=f"{IMMPORT_SEARCH_BASE}?studyAccession={accession}&pageSize=1",
+            access_type=ACCESS_TYPE_API,
+            notes="Shared Data API search endpoint for study metadata (no file transfer).",
+        )
+    )
+
+    doi = metadata.get("doi", "").strip()
+    if doi:
+        doi_url = doi if doi.startswith("http") else f"https://doi.org/{doi}"
+        references.append(
+            _reference(
+                ref_id=f"{accession}-doi",
+                label=f"Study DOI ({accession})",
+                url=doi_url,
+                access_type=ACCESS_TYPE_REPOSITORY,
+                notes="DOI landing page for the ImmPort study record.",
+            )
+        )
+
+    pubmed_ids = metadata.get("pubmed_id", "").strip()
+    for index, pubmed_id in enumerate(
+        [item.strip() for item in pubmed_ids.split(",") if item.strip()],
+        start=1,
+    ):
+        references.append(
+            _reference(
+                ref_id=f"{accession}-pubmed-{index}",
+                label=f"PubMed ({pubmed_id})",
+                url=f"https://pubmed.ncbi.nlm.nih.gov/{pubmed_id}/",
+                access_type=ACCESS_TYPE_REPOSITORY,
+                notes="Linked publication for the ImmPort study.",
+            )
+        )
+
+    release_version = metadata.get("latest_data_release_version", "").strip()
+    release_date = metadata.get("latest_data_release_date", "").strip()
+    summary_bits = [
+        f"{len(references)} access reference(s) for {accession} via ImmPort.",
+        "Shared study metadata is open; downloading data may require an ImmPort account.",
+    ]
+    if release_version or release_date:
+        summary_bits.append(
+            "Latest data release: "
+            + ", ".join(part for part in (release_version, release_date) if part)
+            + "."
+        )
+
+    summary = AccessSummary(
+        text=" ".join(summary_bits),
+        repository_page_url=repository_url,
+        reference_count=len(references),
+        direct_downloads_available=False,
+        auth_may_be_required=True,
+    )
+    return summary, references
+
+
 def discover_candidate_access(
     candidate: DatasetCandidate,
 ) -> tuple[AccessSummary, list[DataAccessReference]]:
@@ -289,6 +370,8 @@ def discover_candidate_access(
         return discover_geo_access(candidate)
     if candidate.repository == GXA_REPOSITORY:
         return discover_gxa_access(candidate)
+    if candidate.repository == IMMPORT_REPOSITORY:
+        return discover_immport_access(candidate)
     repository_url = candidate.url or ""
     references = [
         _reference(

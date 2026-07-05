@@ -137,6 +137,15 @@ class InterpretedQuery(BaseModel):
     organism: str | None = None
 
 
+class DatasetSearchOptions(BaseModel):
+    """Client-controlled options for dataset discovery retrieval."""
+
+    include_text_broad: bool = Field(
+        default=True,
+        description="Run ImmPort text_broad supplemental free-text strategy after facet strategies",
+    )
+
+
 class DataAccessReference(BaseModel):
     """Lightweight link to a repository page, API endpoint, or discoverable file path."""
 
@@ -184,6 +193,10 @@ class DatasetCandidate(BaseModel):
     metadata_fields: dict[str, str] = Field(
         default_factory=dict,
         description="Normalized repository metadata used for evidence extraction",
+    )
+    source_metadata: dict[str, str] = Field(
+        default_factory=dict,
+        description="Repository-specific metadata preserved for UI and agent context",
     )
     requested_concepts: list[ConceptMapping] = Field(
         default_factory=list,
@@ -240,7 +253,7 @@ class DatasetCandidate(BaseModel):
 
 
 class DatasetSearchCursor(BaseModel):
-    """State for fetching the next GEO batch without re-running grounding."""
+    """Opaque state for POST /api/dataset-search/more (strategy paging + seen IDs)."""
 
     query: str
     interpreted_query: InterpretedQuery
@@ -249,7 +262,7 @@ class DatasetSearchCursor(BaseModel):
     strategy_totals: dict[str, int] = Field(default_factory=dict)
     seen_ids: list[str] = Field(
         default_factory=list,
-        description="GEO GDS UIDs already retrieved",
+        description="Repository-specific IDs already retrieved (e.g. GEO GDS UIDs)",
     )
     seen_accessions: list[str] = Field(
         default_factory=list,
@@ -259,6 +272,14 @@ class DatasetSearchCursor(BaseModel):
     primary_total_found: int | None = None
     max_results: int = 15
     search_term: str | None = None
+    repository: str | None = Field(
+        default=None,
+        description="Repository label for load-more routing (set by the adapter cursor builder)",
+    )
+    include_text_broad: bool = Field(
+        default=True,
+        description="Whether text_broad supplemental ImmPort strategy is active for this cursor",
+    )
     has_more: bool = False
 
 
@@ -290,6 +311,14 @@ class DatasetSearchResult(BaseModel):
     )
     has_more: bool = False
     retrieved_count: int = 0
+    retrievable_total: int | None = Field(
+        default=None,
+        description="Unique studies actually paginated from the repository when search completes",
+    )
+    include_text_broad: bool | None = Field(
+        default=None,
+        description="Whether text_broad supplemental ImmPort strategy was used",
+    )
     load_more_cursor: DatasetSearchCursor | None = Field(
         default=None,
         description="Opaque cursor for POST /api/dataset-search/more",

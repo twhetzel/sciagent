@@ -86,7 +86,7 @@ def test_load_more_merges_and_reranks_candidates():
     }
 
     with patch(
-        "agent.dataset_discovery.fetch_more_geo_repository_records",
+        "agent.dataset_discovery.fetch_more_repository_records",
         return_value=more_payload,
     ):
         result = load_more_dataset_search(_cursor(), [_existing_candidate()])
@@ -98,3 +98,75 @@ def test_load_more_merges_and_reranks_candidates():
     assert result.has_more is True
     assert result.load_more_cursor is not None
     assert result.load_more_cursor.seen_accessions == ["GSEOLD", "GSENEW"]
+
+
+def test_load_more_merges_and_reranks_immport_candidates():
+    from domain.dataset_search import DatasetSearchCursor, InterpretedQuery
+    from tools.immport_dataset_search import IMMPORT_REPOSITORY
+
+    cursor = DatasetSearchCursor(
+        query="Find public immunology datasets for asthma PBMC flow cytometry.",
+        interpreted_query=InterpretedQuery(
+            disease="asthma",
+            tissue="PBMC",
+            assay="Flow Cytometry",
+            organism="human",
+        ),
+        concept_mappings=[],
+        strategy_offsets={"strict": 2, "broad_1": 1, "broad_2": 1, "broad_3": 1},
+        strategy_totals={"strict": 1, "broad_1": 4, "broad_2": 12, "broad_3": 28},
+        seen_accessions=["SDYOLD"],
+        total_found=28,
+        primary_total_found=1,
+        max_results=5,
+        search_term="asthma Flow Cytometry PBMC",
+        has_more=True,
+    )
+
+    existing = DatasetCandidate(
+        repository=IMMPORT_REPOSITORY,
+        accession="SDYOLD",
+        title="Existing asthma study",
+        description="Asthma PBMC flow cytometry",
+        metadata_fields={"title": "Existing asthma study"},
+        score=0.9,
+        match_status="full",
+    )
+
+    more_payload = {
+        "records": [
+            {
+                "accession": "SDYNEW",
+                "title": "New asthma study",
+                "description": "Asthma PBMC flow cytometry follow-up",
+                "summary": "Asthma PBMC flow cytometry follow-up",
+                "condition_or_disease": "asthma",
+                "biosample_type": "PBMC",
+                "assay_method": "Flow Cytometry",
+                "species": "Homo sapiens",
+                "url": "https://www.immport.org/shared/study/SDYNEW",
+                "_retrieval_strategy": "broad_3",
+                "_retrieval_search_term": "asthma",
+            }
+        ],
+        "added_count": 1,
+        "has_more": True,
+        "load_more_cursor": cursor.model_copy(
+            update={"seen_accessions": ["SDYOLD", "SDYNEW"], "strategy_offsets": {"broad_3": 6}}
+        ).model_dump(),
+        "source": "ImmPort",
+        "repository": IMMPORT_REPOSITORY,
+    }
+
+    with patch(
+        "agent.dataset_discovery.fetch_more_repository_records",
+        return_value=more_payload,
+    ):
+        result = load_more_dataset_search(cursor, [existing])
+
+    accessions = [candidate.accession for candidate in result.candidates]
+    assert "SDYOLD" in accessions
+    assert "SDYNEW" in accessions
+    assert result.retrieved_count == 2
+    assert result.has_more is True
+    assert result.load_more_cursor is not None

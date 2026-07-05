@@ -19,6 +19,7 @@ from .gxa_assay import (
     build_gxa_assay_warning,
     gxa_supports_requested_assay,
 )
+from .repository_vocab import resolve_immport_facet_value
 
 DERIVED_TISSUE_MODEL_PATTERNS: tuple[str, ...] = (
     r"\borganoids?\b",
@@ -28,8 +29,18 @@ DERIVED_TISSUE_MODEL_PATTERNS: tuple[str, ...] = (
     r"\bintestinal organoids?\b",
 )
 
-DISEASE_EVIDENCE_FIELDS = ("title", "summary")
-TISSUE_EVIDENCE_FIELDS = ("title", "summary", "sample_titles")
+DISEASE_EVIDENCE_FIELDS = ("title", "summary", "condition_or_disease")
+TISSUE_EVIDENCE_FIELDS = ("title", "summary", "sample_titles", "biosample_type")
+
+# ImmPort Shared Data structured facet fields (also used by other CV-backed sources).
+IMMPORT_DISEASE_FIELD = "condition_or_disease"
+IMMPORT_TISSUE_FIELD = "biosample_type"
+IMMPORT_ASSAY_FIELD = "assay_method"
+IMMPORT_STRUCTURED_FACET_FIELDS = (
+    IMMPORT_DISEASE_FIELD,
+    IMMPORT_TISSUE_FIELD,
+    IMMPORT_ASSAY_FIELD,
+)
 
 ASSAY_DETECTORS: list[tuple[str, list[str]]] = [
     ("ATAC-seq", [r"\batac[\s-]?seq\b", r"transposase-accessible"]),
@@ -56,6 +67,10 @@ ASSAY_DETECTORS: list[tuple[str, list[str]]] = [
             r"\btranscriptome profiling\b",
         ],
     ),
+    (
+        "Flow Cytometry",
+        [r"\bflow[\s-]?cytometry\b", r"\bfacs\b"],
+    ),
 ]
 
 GDS_TYPE_ASSAY_HINTS: list[tuple[str, str]] = [
@@ -64,9 +79,10 @@ GDS_TYPE_ASSAY_HINTS: list[tuple[str, str]] = [
     ("genome binding/occupancy profiling by high throughput sequencing", "occupancy"),
     ("methylation profiling by high throughput sequencing", "methylation"),
     ("array", "microarray"),
+    ("flow cytometry", "Flow Cytometry"),
 ]
 
-STRUCTURED_ASSAY_FIELDS = ("gdstype", "summary", "platformtitle", "ptechtype")
+STRUCTURED_ASSAY_FIELDS = ("assay_method", "gdstype", "summary", "platformtitle", "ptechtype")
 MIXED_ASSAY_LABEL = "mixed or multi-assay"
 
 MOUSE_ORGANISM_LABEL = "Mus musculus"
@@ -88,6 +104,57 @@ SLOT_FIELD_PRIORITY = (
 
 def _normalize_text(text: str) -> str:
     return re.sub(r"\s+", " ", text.lower()).strip()
+
+
+def _split_facet_values(text: str) -> list[str]:
+    """Split comma- or semicolon-separated controlled vocabulary values."""
+    if not text:
+        return []
+    return [part.strip() for part in re.split(r"[,;]", text) if part.strip()]
+
+
+def _structured_facet_matches_mapping(mapping: ConceptMapping, text: str) -> bool:
+    """Match a repository CV facet value against a grounded concept mapping."""
+    if not text:
+        return False
+    fragments = _split_facet_values(text) or [text.strip()]
+    requested_values = {
+        _normalize_text(mapping.label),
+        _normalize_text(mapping.query_term),
+    }
+    resolved_request = resolve_immport_facet_value(mapping.slot, mapping.label)
+    if resolved_request:
+        requested_values.add(_normalize_text(resolved_request))
+    for synonym in mapping.synonyms or []:
+        requested_values.add(_normalize_text(synonym))
+        resolved_synonym = resolve_immport_facet_value(mapping.slot, synonym)
+        if resolved_synonym:
+            requested_values.add(_normalize_text(resolved_synonym))
+    requested_values.discard("")
+
+    for fragment in fragments:
+        if terms_matching_in_text(mapping, fragment):
+            return True
+        fragment_norm = _normalize_text(fragment)
+        if fragment_norm in requested_values:
+            return True
+        resolved_fragment = resolve_immport_facet_value(mapping.slot, fragment)
+        if resolved_fragment and _normalize_text(resolved_fragment) in requested_values:
+            return True
+    return False
+
+
+def _structured_matched_terms(mapping: ConceptMapping, text: str) -> list[str]:
+    """Return CV fragment labels that matched a grounded concept."""
+    matched: list[str] = []
+    for fragment in _split_facet_values(text) or [text.strip()]:
+        if _structured_facet_matches_mapping(mapping, fragment):
+            matched.append(fragment)
+    if matched:
+        return matched
+    if _structured_facet_matches_mapping(mapping, text):
+        return [text.strip()]
+    return []
 
 
 def _first_pattern_match(text: str, patterns: Iterable[str]) -> bool:
@@ -165,6 +232,10 @@ def _assays_in_text(text: str, field_name: str = "") -> set[str]:
                 else:
                     assays.add(assay)
 
+    if field_name == IMMPORT_ASSAY_FIELD:
+        for value in _split_facet_values(text):
+            assays.add(value)
+
     for label, patterns in ASSAY_DETECTORS:
         if _first_pattern_match(text, patterns):
             assays.add(label)
@@ -188,6 +259,14 @@ def detect_observed_assay(fields: dict[str, str]) -> str:
     if gxa_observed:
         return gxa_observed
 
+    assay_method = fields.get(IMMPORT_ASSAY_FIELD, "").strip()
+    if assay_method:
+        values = _split_facet_values(assay_method)
+        if len(values) == 1:
+            return values[0]
+        if len(values) > 1:
+            return MIXED_ASSAY_LABEL
+
     by_field = detect_assays_by_field(fields)
     all_assays: set[str] = set()
     for assays in by_field.values():
@@ -206,6 +285,8 @@ def detect_observed_assay(fields: dict[str, str]) -> str:
 def _assay_supported_in_field(mapping: ConceptMapping, field_name: str, text: str) -> bool:
     if mapping.slot != "assay":
         return False
+    if field_name == IMMPORT_ASSAY_FIELD and _structured_facet_matches_mapping(mapping, text):
+        return True
     requested = _normalize_text(mapping.label)
     field_assays = _assays_in_text(text, field_name=field_name)
     return any(_normalize_text(assay) == requested for assay in field_assays)
@@ -218,6 +299,10 @@ def _assay_evidence_fields(fields: dict[str, str], mapping: ConceptMapping) -> l
         if gxa_supports_requested_assay(gxa_type, mapping.label):
             return [(GXA_EXPERIMENT_TYPE_FIELD, gxa_type)]
         return []
+
+    assay_method = fields.get(IMMPORT_ASSAY_FIELD, "").strip()
+    if assay_method and _structured_facet_matches_mapping(mapping, assay_method):
+        return [(IMMPORT_ASSAY_FIELD, assay_method)]
 
     matches: list[tuple[str, str]] = []
     for field_name in SLOT_FIELD_PRIORITY:
@@ -460,6 +545,11 @@ def _matched_terms_in_fields(
         text = fields.get(field_name, "")
         if not text:
             continue
+        if field_name in IMMPORT_STRUCTURED_FACET_FIELDS:
+            if _structured_facet_matches_mapping(mapping, text):
+                matched_fields.append(field_name)
+                matched_terms.update(_structured_matched_terms(mapping, text))
+            continue
         terms = terms_matching_in_text(mapping, text)
         if terms:
             matched_fields.append(field_name)
@@ -521,7 +611,7 @@ def extract_tissue_evidence_details(
     if _has_derived_tissue_model_signal(evidence_text):
         return present, matched_fields, matched_terms, "derived_model"
 
-    direct_fields = {"title", "summary"}
+    direct_fields = {"title", "summary", IMMPORT_TISSUE_FIELD}
     if matched_fields and not any(field in direct_fields for field in matched_fields):
         return present, matched_fields, matched_terms, "ambiguous"
 
@@ -546,6 +636,11 @@ def extract_assay_evidence_details(
     requested = _normalize_text(mapping.label)
     matched_terms: set[str] = set()
     for field_name, text in matches:
+        if field_name == IMMPORT_ASSAY_FIELD:
+            for value in _split_facet_values(text):
+                if _structured_facet_matches_mapping(mapping, value):
+                    matched_terms.add(value)
+            continue
         for assay in _assays_in_text(text, field_name=field_name):
             if _normalize_text(assay) == requested:
                 matched_terms.add(assay)
@@ -586,6 +681,10 @@ def extract_organism_evidence_details(
 def detect_observed_disease(fields: dict[str, str], mapping: ConceptMapping | None) -> str | None:
     if not mapping:
         return None
+    structured = fields.get(IMMPORT_DISEASE_FIELD, "")
+    if structured and _structured_facet_matches_mapping(mapping, structured):
+        for fragment in _structured_matched_terms(mapping, structured):
+            return fragment
     for field in ("title", "summary"):
         text = fields.get(field, "")
         if text and terms_matching_in_text(mapping, text):
@@ -596,6 +695,10 @@ def detect_observed_disease(fields: dict[str, str], mapping: ConceptMapping | No
 def detect_observed_tissue(fields: dict[str, str], mapping: ConceptMapping | None) -> str | None:
     if not mapping:
         return None
+    structured = fields.get(IMMPORT_TISSUE_FIELD, "")
+    if structured and _structured_facet_matches_mapping(mapping, structured):
+        for fragment in _structured_matched_terms(mapping, structured):
+            return fragment
     for field in ("title", "summary", "sample_titles"):
         text = fields.get(field, "")
         if text and terms_matching_in_text(mapping, text):

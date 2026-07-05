@@ -6,7 +6,7 @@ Orientation page for reviewers and new contributors. For setup, architecture, an
 
 **Integrated dataset discovery**
 
-- **GEO** and **Expression Atlas** are integrated into one ranked result list (merge, de-duplication, shared UI).
+- **GEO**, **Expression Atlas**, and **ImmPort** are integrated into one ranked result list (merge, de-duplication, shared UI).
 - Natural-language queries are interpreted into **disease**, **tissue/anatomy**, **assay**, and **organism** facets.
 - Facets are **ontology-grounded** with facet-aware provider priority (curated aliases, OLS, optional BioPortal/LLM).
 - Clinical abbreviation handling works (e.g. **UC** → ulcerative colitis when context supports it).
@@ -27,7 +27,7 @@ Orientation page for reviewers and new contributors. For setup, architecture, an
 | Area | Status |
 |------|--------|
 | File / download **manifest discovery** | Backend access discovery for GEO and Expression Atlas; UI manifest export |
-| **BioStudies** / **ArrayExpress** | Not implemented |
+| **OmicsDI**, **VDJServer**, **Vivli** | Registry stubs in `GET /api/config`; connectors planned |
 | **Local / private** data connectors | Not implemented |
 
 ## Where to read more

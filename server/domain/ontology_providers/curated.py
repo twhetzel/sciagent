@@ -42,6 +42,14 @@ SEED_CONCEPTS: dict[str, dict] = {
         "iri": "http://purl.obolibrary.org/obo/MONDO_0004975",
         "synonyms": ["Alzheimer disease", "Alzheimer's disease", "Alzheimers disease"],
     },
+    "asthma": {
+        "slot": "disease",
+        "curie": "MONDO:0004979",
+        "label": "asthma",
+        "ontology": "MONDO",
+        "iri": "http://purl.obolibrary.org/obo/MONDO_0004979",
+        "synonyms": ["asthma", "bronchial asthma"],
+    },
     **anatomy_seed_concepts(),
     "RNA-seq": {
         "slot": "assay",
@@ -57,6 +65,14 @@ SEED_CONCEPTS: dict[str, dict] = {
             "transcriptome profiling",
             "RNA-Seq",
         ],
+    },
+    "Flow Cytometry": {
+        "slot": "assay",
+        "curie": "OBI:0000913",
+        "label": "Flow Cytometry",
+        "ontology": "OBI",
+        "iri": "http://purl.obolibrary.org/obo/OBI_0000913",
+        "synonyms": ["Flow Cytometry", "flow cytometry", "flow-cytometry"],
     },
     "human": {
         "slot": "organism",

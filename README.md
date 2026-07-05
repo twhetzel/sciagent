@@ -63,13 +63,14 @@ Queries like `BRCA1 gene`, `marfan syndrome variants`, or `Find RNA-seq datasets
 | `openalex` | OpenAlex REST API | Optional `OPENALEX_EMAIL` |
 | `europepmc` | Europe PMC REST API | None |
 | `expression_atlas` | EMBL-EBI Expression Atlas (EBI Search + GXA JSON API) | None; dataset-discovery pipeline when GEO is excluded or for routed dataset queries |
+| `immport` | ImmPort Shared Data API (study metadata search) | None; integrated dataset-discovery pipeline with GEO and Expression Atlas |
 | `mygene` | MyGene.info v3 | None |
 | `uniprot` | UniProt REST | None |
 | `clinvar` | NCBI E-utilities (ClinVar) | Same NCBI env vars as PubMed |
 | `alphafold` | AlphaFold EBI API | None |
 | `geo_dataset_search` | NCBI GEO (GDS) | Same NCBI env vars as PubMed |
 | `summarize` | OpenAI / Anthropic | `OPENAI_API_KEY` and/or `ANTHROPIC_API_KEY` |
-| *(post-processing)* | OLS / BioPortal / Claude | Optional `BIOPORTAL_API_KEY`, `ANTHROPIC_API_KEY` for ontology normalization |
+| *(post-processing)* | OLS / BioPortal / Claude | Optional `BIOPORTAL_API_KEY`, `ANTHROPIC_API_KEY` for ontology normalization and dataset `interpret_llm` fallback |
 
 See [How the orchestrator works](#how-the-orchestrator-works-no-llm-required) for the full routing model. To add a new source, follow [docs/adding-a-source.md](docs/adding-a-source.md). On the standard agent path, `tools/ontology_normalizer.py` runs after tools finish and appears in the trace as **Normalize (tool results)**. Dataset discovery queries use a separate seven-step pipeline documented below.
 
@@ -106,7 +107,7 @@ These queries use a dedicated trace path and **do not** call `ontology_normalize
 
 | Step | Responsibility |
 |------|----------------|
-| **Interpret Query** | Extract disease, tissue, assay, organism facets via regex patterns, abbreviation resolution, and phrase grounding |
+| **Interpret Query** | Extract disease, tissue, assay, organism facets via regex patterns, abbreviation resolution, and phrase grounding; **organism is only set when the query names it** (e.g. human, Homo sapiens) — no implicit human default |
 | **Ground Query** | Map requested facets to ontology concepts using curated aliases/cache plus ontology lookup providers |
 | **Search Repository** | Search GEO using grounded labels and synonyms |
 | **Normalize Records** | Convert GEO API payloads into shared `DatasetCandidate` records |
@@ -167,7 +168,7 @@ Related ontology synonyms can support ranking and evidence snippets but do not a
 | Multi-clause sentences | `I need RNA-seq. Disease is lupus. Tissue is kidney.` | No full-sentence semantic parser; each clause is not interpreted independently |
 | Unknown terms outside ontology coverage | Obscure disease names with no OLS/MONDO match | Dynamic lookup capped at 6 OLS/BioPortal attempts per query after curated misses |
 | List ordering for tissues | `ileum, colon, Crohn's disease` | First grounded tissue wins (`colon` before `ileum` in scan order) |
-| Single-word dynamic lookup | Rare one-word tissue/disease terms not in curated cache | Dynamic pass skips single-word phrases to reduce noise; relies on curated seed or multi-word context |
+| Single-word dynamic lookup | Rare one-word tissue/disease/assay terms not in curated cache | Dynamic pass allows single-word **disease** and **assay** when OLS returns a strong match; tissue still prefers curated anatomy; acronyms remain guarded |
 | Assay / organism regex coverage | `ChIP-seq`, `mouse` studies | Regex patterns are narrow; may need phrase grounding or pattern expansion |
 | LLM expansion | Obscure aliases | Requires `ANTHROPIC_API_KEY`; without it, only curated + OLS/BioPortal exact/synonym matches apply |
 | Unusual nested punctuation | Multiple parentheticals, heavy nested qualifiers | Parentheticals are stripped; very complex structure may still produce noisy n-grams |
@@ -391,13 +392,14 @@ See [`.env.example`](.env.example). Key variables:
 |----------|---------|
 | `SCIAGENT_HOST` / `SCIAGENT_PORT` | API bind address |
 | `SCIAGENT_CORS_ORIGINS` | Allowed browser origins (comma-separated) |
-| `SCIAGENT_EXCLUDED_SOURCES` | Optional blocklist of external data sources to skip (`pubmed`, `openalex`, `europepmc`, `expression_atlas`, `mygene`, `uniprot`, `clinvar`, `alphafold`, `geo_dataset_search`). Excluding `geo_dataset_search` routes dataset-style queries to Expression Atlas only; with both enabled, GEO and GXA results are merged and de-duplicated. |
+| `SCIAGENT_EXCLUDED_SOURCES` | Optional blocklist of external data sources to skip (`pubmed`, `openalex`, `europepmc`, `expression_atlas`, `immport`, `mygene`, `uniprot`, `clinvar`, `alphafold`, `geo_dataset_search`). Excluding `geo_dataset_search` routes dataset-style queries to Expression Atlas and ImmPort when enabled; with all enabled, GEO, GXA, and ImmPort results are merged and ranked together. Planned NIAID sources (`omicsdi`, `vdjserver`, `vivli`) appear in `GET /api/config` but are not enabled until connectors ship. |
 | `SCIAGENT_EXCLUDED_TOOLS` | Optional blocklist of agent tools to skip (`summarize`) |
 | `NCBI_EMAIL` | **Recommended.** Contact email for NCBI E-utilities (PubMed, ClinVar, GEO); `PUBMED_EMAIL` fallback |
 | `NCBI_API_KEY` | Optional NCBI API key for higher E-utilities rate limits |
 | `GEO_MAX_RESULTS` | Max GEO records to retrieve and rank per dataset-discovery query (default `15`, cap `200`) |
 | `OPENALEX_EMAIL` | OpenAlex `mailto` parameter |
 | `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | Optional summarization and ontology tier 3 |
+| `SCIAGENT_LLM_INTERPRET` | When `true` (default) and `ANTHROPIC_API_KEY` is set, run a separate `interpret_llm` trace step when rule-based interpret leaves disease/tissue/assay empty; set `false` to A/B test with LLM off |
 | `BIOPORTAL_API_KEY` | Optional BioPortal ontology lookup (tier 2) |
 
 ## Deployment

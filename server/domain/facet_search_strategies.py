@@ -17,6 +17,8 @@ STRATEGY_PRIORITY = {
     "broad_1": 1,
     "broad_2": 2,
     "broad_3": 3,
+    "text_broad": 4,
+    "adhoc": 5,
 }
 
 

@@ -41,10 +41,18 @@ export async function getTools() {
   return request('/api/tools');
 }
 
-export async function postQuery(query) {
+export async function getConfig() {
+  return request('/api/config');
+}
+
+export async function postQuery(query, searchOptions = undefined) {
+  const body = { query };
+  if (searchOptions) {
+    body.search_options = searchOptions;
+  }
   return request('/api/query', {
     method: 'POST',
-    body: JSON.stringify({ query }),
+    body: JSON.stringify(body),
   });
 }
 

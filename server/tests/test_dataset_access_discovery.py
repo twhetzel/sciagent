@@ -5,6 +5,7 @@ from unittest.mock import patch
 from domain.dataset_access_discovery import (
     discover_geo_access,
     discover_gxa_access,
+    discover_immport_access,
     enrich_candidate_with_access,
     enrich_candidates_with_access,
 )
@@ -86,6 +87,34 @@ def test_discover_gxa_access_uses_stored_urls_without_fetch():
     assert "direct_download" in ref_types
     assert "api" in ref_types
     assert any("download" in ref.url for ref in references if ref.access_type == "direct_download")
+
+
+def test_discover_immport_access_includes_repository_api_and_doi_links():
+    candidate = DatasetCandidate(
+        repository="ImmPort",
+        accession="SDY1365",
+        title="UC MAIT study",
+        description="Establish whether MAIT cells participate in pathophysiology of UC",
+        url="https://www.immport.org/shared/study/SDY1365",
+        score=10.0,
+        source_metadata={
+            "doi": "10.21430/M3AV8VFYCB",
+            "pubmed_id": "30123456",
+            "latest_data_release_version": "DR58",
+            "latest_data_release_date": "2025-10-30",
+        },
+    )
+
+    summary, references = discover_immport_access(candidate)
+    ref_types = {ref.access_type for ref in references}
+
+    assert summary.repository_page_url.endswith("/shared/study/SDY1365")
+    assert summary.direct_downloads_available is False
+    assert summary.auth_may_be_required is True
+    assert "repository_page" in ref_types
+    assert "api" in ref_types
+    assert any("doi.org" in ref.url for ref in references)
+    assert any("pubmed.ncbi.nlm.nih.gov" in ref.url for ref in references)
 
 
 def test_discover_gxa_access_fetches_detail_when_urls_missing():

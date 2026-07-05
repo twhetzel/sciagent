@@ -14,7 +14,7 @@ def test_crohns_ileum_query_resolves_all_facets_and_builds_four_strategies():
     assert interpreted.disease == "Crohn's disease"
     assert interpreted.tissue == "ileum"
     assert interpreted.assay == "RNA-seq"
-    assert interpreted.organism == "human"
+    assert interpreted.organism is None
 
     mappings = enrich_concept_mappings(ground_interpreted_query(interpreted))
     strategies = build_geo_search_queries(mappings)

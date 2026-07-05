@@ -1,0 +1,223 @@
+"""Central registry for dataset pipeline repositories (search, normalize, load-more)."""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from dataclasses import dataclass
+from functools import lru_cache
+from typing import Any
+
+from domain.dataset_search import DatasetSearchCursor, InterpretedQuery
+
+GEO_REPOSITORY = "GEO"
+GXA_REPOSITORY = "Expression Atlas"
+IMMPORT_REPOSITORY = "ImmPort"
+
+FetchRecordsFn = Callable[..., dict[str, Any]]
+FetchMoreFn = Callable[[DatasetSearchCursor], dict[str, Any]]
+NormalizeFn = Callable[[list[dict[str, Any]]], list[Any]]
+MaxResultsFn = Callable[[int | None], int]
+
+
+@dataclass(frozen=True)
+class DatasetRepositorySpec:
+    """Handlers and metadata for one dataset pipeline repository."""
+
+    repository: str
+    tool_name: str
+    source_display: str
+    priority: int
+    fetch_records: FetchRecordsFn
+    normalize_records: NormalizeFn
+    resolve_max_results: MaxResultsFn
+    accession_prefixes: tuple[str, ...] = ()
+    fetch_more_records: FetchMoreFn | None = None
+
+    @property
+    def supports_load_more(self) -> bool:
+        return self.fetch_more_records is not None
+
+
+def _build_registry() -> dict[str, DatasetRepositorySpec]:
+    from tools.expression_atlas import (
+        fetch_gxa_repository_records,
+        get_expression_atlas_max_results,
+        normalize_gxa_records,
+    )
+    from tools.geo_dataset_search import (
+        fetch_geo_repository_records,
+        fetch_more_geo_repository_records,
+        get_geo_max_results,
+        normalize_geo_records,
+    )
+    from tools.immport_dataset_search import (
+        fetch_immport_repository_records,
+        fetch_more_immport_repository_records,
+        get_immport_max_results,
+        normalize_immport_records,
+    )
+
+    return {
+        GEO_REPOSITORY: DatasetRepositorySpec(
+            repository=GEO_REPOSITORY,
+            tool_name="geo_dataset_search",
+            source_display="NCBI GEO",
+            priority=0,
+            accession_prefixes=("GSE",),
+            fetch_records=fetch_geo_repository_records,
+            fetch_more_records=fetch_more_geo_repository_records,
+            normalize_records=normalize_geo_records,
+            resolve_max_results=get_geo_max_results,
+        ),
+        GXA_REPOSITORY: DatasetRepositorySpec(
+            repository=GXA_REPOSITORY,
+            tool_name="expression_atlas",
+            source_display="Expression Atlas",
+            priority=1,
+            accession_prefixes=("E-",),
+            fetch_records=fetch_gxa_repository_records,
+            fetch_more_records=None,
+            normalize_records=normalize_gxa_records,
+            resolve_max_results=get_expression_atlas_max_results,
+        ),
+        IMMPORT_REPOSITORY: DatasetRepositorySpec(
+            repository=IMMPORT_REPOSITORY,
+            tool_name="immport",
+            source_display="ImmPort",
+            priority=2,
+            accession_prefixes=("SDY",),
+            fetch_records=fetch_immport_repository_records,
+            fetch_more_records=fetch_more_immport_repository_records,
+            normalize_records=normalize_immport_records,
+            resolve_max_results=get_immport_max_results,
+        ),
+    }
+
+
+@lru_cache
+def get_dataset_repository_registry() -> dict[str, DatasetRepositorySpec]:
+    return _build_registry()
+
+
+def get_repository_spec(repository: str) -> DatasetRepositorySpec:
+    try:
+        return get_dataset_repository_registry()[repository]
+    except KeyError as exc:
+        raise ValueError(f"Unsupported dataset repository: {repository}") from exc
+
+
+def supported_repositories() -> frozenset[str]:
+    return frozenset(get_dataset_repository_registry())
+
+
+def repository_priority_map() -> dict[str, int]:
+    return {
+        spec.repository: spec.priority
+        for spec in get_dataset_repository_registry().values()
+    }
+
+
+def infer_record_repository(record: dict[str, Any]) -> str:
+    tagged = record.get("_source_repository")
+    if tagged in supported_repositories():
+        return tagged
+    accession = str(record.get("accession") or "").upper()
+    for spec in sorted(
+        get_dataset_repository_registry().values(),
+        key=lambda item: item.priority,
+    ):
+        if any(accession.startswith(prefix.upper()) for prefix in spec.accession_prefixes):
+            return spec.repository
+    return GEO_REPOSITORY
+
+
+def pick_load_more_cursor(search_results: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Pick the highest-priority repository cursor when multiple sources were searched."""
+    priority = repository_priority_map()
+    ordered = sorted(
+        search_results,
+        key=lambda result: priority.get(str(result.get("repository") or ""), 99),
+    )
+    for result in ordered:
+        cursor = result.get("load_more_cursor")
+        if cursor and result.get("has_more"):
+            return cursor
+    for result in ordered:
+        cursor = result.get("load_more_cursor")
+        if cursor:
+            return cursor
+    return None
+
+
+def resolve_repository_for_load_more(
+    cursor: DatasetSearchCursor,
+    existing_candidates: list[Any],
+) -> str:
+    if cursor.repository:
+        return cursor.repository
+    if existing_candidates:
+        return existing_candidates[0].repository
+    raise ValueError("Cannot resolve repository for load-more (missing cursor.repository and candidates)")
+
+
+def repository_supports_load_more(repository: str) -> bool:
+    return get_repository_spec(repository).supports_load_more
+
+
+def is_repository_tool_enabled(registry: Any, repository: str) -> bool:
+    spec = get_repository_spec(repository)
+    return registry.get_tool(spec.tool_name) is not None
+
+
+def any_load_more_enabled(registry: Any) -> bool:
+    return any(
+        spec.supports_load_more and registry.get_tool(spec.tool_name) is not None
+        for spec in get_dataset_repository_registry().values()
+    )
+
+
+def fetch_repository_records(
+    repository: str,
+    concept_mappings,
+    max_results: int | None = None,
+    *,
+    query: str = "",
+    interpreted_query: InterpretedQuery | None = None,
+    species: str | None = None,
+    include_text_broad: bool = True,
+) -> dict[str, Any]:
+    spec = get_repository_spec(repository)
+    if repository == GXA_REPOSITORY:
+        return spec.fetch_records(
+            concept_mappings,
+            max_results=max_results,
+            query=query,
+            interpreted_query=interpreted_query,
+            species=species,
+        )
+    if repository == IMMPORT_REPOSITORY:
+        return spec.fetch_records(
+            concept_mappings,
+            max_results=max_results,
+            query=query,
+            interpreted_query=interpreted_query,
+            include_text_broad=include_text_broad,
+        )
+    return spec.fetch_records(
+        concept_mappings,
+        max_results=max_results,
+        query=query,
+        interpreted_query=(
+            interpreted_query.model_dump() if interpreted_query is not None else None
+        ),
+    )
+
+
+def fetch_more_repository_records(
+    repository: str,
+    cursor: DatasetSearchCursor,
+) -> dict[str, Any]:
+    spec = get_repository_spec(repository)
+    if spec.fetch_more_records is None:
+        raise RuntimeError(f"Load-more is not implemented for {repository}")
+    return spec.fetch_more_records(cursor)

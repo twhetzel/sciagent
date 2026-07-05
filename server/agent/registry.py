@@ -247,3 +247,25 @@ class ToolRegistry:
             )
         except ImportError:
             pass
+
+        try:
+            from tools.immport_dataset_search import search_immport_datasets
+            self.register_tool(
+                name="immport",
+                description=(
+                    "Search ImmPort shared immunology study metadata using grounded ontology concepts"
+                ),
+                function=search_immport_datasets,
+                parameters={
+                    "query": {"type": "str", "required": True, "description": "Search query"},
+                    "interpreted_query": {
+                        "type": "dict",
+                        "required": False,
+                        "description": (
+                            "Interpreted disease/tissue/assay facets for multi-strategy search"
+                        ),
+                    },
+                },
+            )
+        except ImportError:
+            pass

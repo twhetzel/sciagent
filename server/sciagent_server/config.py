@@ -29,11 +29,19 @@ SOURCE_NAMES = frozenset({
     "openalex",
     "europepmc",
     "expression_atlas",
+    "immport",
     "mygene",
     "uniprot",
     "clinvar",
     "alphafold",
     "geo_dataset_search",
+})
+
+# NIAID-aligned sources with registry metadata but no connector yet.
+PLANNED_SOURCE_NAMES = frozenset({
+    "omicsdi",
+    "vdjserver",
+    "vivli",
 })
 
 # Agent capabilities that are not external data sources.
@@ -62,6 +70,26 @@ EXCLUDED_SOURCES = parse_excluded_sources()
 EXCLUDED_TOOLS = parse_excluded_tools()
 
 
+def default_include_text_broad() -> bool:
+    """Default for ImmPort text_broad strategy (SCIAGENT_IMMPORT_TEXT_BROAD, default true)."""
+    raw = os.environ.get("SCIAGENT_IMMPORT_TEXT_BROAD", "true").strip().lower()
+    return raw not in {"false", "0", "no", "off"}
+
+
+def resolve_dataset_search_options(
+    search_options: dict | None = None,
+) -> "DatasetSearchOptions":
+    from domain.dataset_search import DatasetSearchOptions
+
+    default = default_include_text_broad()
+    if not search_options:
+        return DatasetSearchOptions(include_text_broad=default)
+    include_text_broad = search_options.get("include_text_broad")
+    if include_text_broad is None:
+        include_text_broad = default
+    return DatasetSearchOptions(include_text_broad=bool(include_text_broad))
+
+
 def is_source_enabled(name: str) -> bool:
     """Return True when an external source is not listed in SCIAGENT_EXCLUDED_SOURCES."""
     if name not in SOURCE_NAMES:
@@ -83,6 +111,42 @@ def is_capability_enabled(name: str) -> bool:
     if name in AGENT_TOOL_NAMES:
         return is_agent_tool_enabled(name)
     return True
+
+
+def build_api_config() -> dict:
+    """Build deployment configuration for /api/config."""
+    from domain.source_registry import PLANNED_CONNECTOR_NOTE, list_source_entries
+
+    sources = []
+    for entry in list_source_entries():
+        if entry.implemented:
+            enabled = is_source_enabled(entry.id)
+            enabled_by_default = True
+        else:
+            enabled = False
+            enabled_by_default = False
+
+        item = {
+            "id": entry.id,
+            "display_name": entry.display_name,
+            "source_type": entry.source_type,
+            "domain": entry.domain,
+            "access_profile": entry.access_profile,
+            "implemented": entry.implemented,
+            "enabled": enabled,
+            "enabled_by_default": enabled_by_default,
+        }
+        if not entry.implemented:
+            item["note"] = PLANNED_CONNECTOR_NOTE
+        sources.append(item)
+
+    return {
+        "version": API_VERSION,
+        "sources": sources,
+        "dataset_search_defaults": {
+            "include_text_broad": default_include_text_broad(),
+        },
+    }
 
 
 def get_ncbi_email() -> str:

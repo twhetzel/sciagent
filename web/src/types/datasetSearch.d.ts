@@ -67,6 +67,7 @@ export interface DatasetCandidate {
   why_matched?: string[]
   why_partial?: string[]
   metadata_warnings?: string[]
+  source_metadata?: Record<string, string>
   score_breakdown?: ScoreBreakdown | null
   /** Populated by access discovery (GEO, Expression Atlas, …). */
   access_summary?: AccessSummary | null
@@ -90,6 +91,8 @@ export interface DatasetSearchResult {
   search_strategies?: Array<Record<string, string | number>>
   has_more?: boolean
   retrieved_count?: number
+  retrievable_total?: number | null
+  include_text_broad?: boolean | null
   load_more_cursor?: unknown
   agent_context?: {
     markdown?: string
