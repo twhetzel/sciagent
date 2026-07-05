@@ -33,7 +33,19 @@ function formatCount(value) {
   return Number(value).toLocaleString()
 }
 
+function repositoryLabel(datasetSearch) {
+  return datasetSearch?.repository || 'repository'
+}
+
+function maxResultsEnvVar(datasetSearch) {
+  const repo = repositoryLabel(datasetSearch)
+  if (repo.includes('+')) return 'GEO_MAX_RESULTS and EXPRESSION_ATLAS_MAX_RESULTS'
+  if (repo === 'GEO') return 'GEO_MAX_RESULTS'
+  return 'EXPRESSION_ATLAS_MAX_RESULTS'
+}
+
 function HitSummaryBanner({ datasetSearch, candidateCount, loadingMore }) {
+  const repository = repositoryLabel(datasetSearch)
   const totalFound = datasetSearch.total_found ?? candidateCount
   const primaryTotalFound = datasetSearch.primary_total_found
   const maxResults = datasetSearch.max_results
@@ -51,7 +63,7 @@ function HitSummaryBanner({ datasetSearch, candidateCount, loadingMore }) {
         {loadingMore
           ? `Loading more… (${formatCount(shown)} ranked so far)`
           : hasMore
-            ? `Showing ${formatCount(shown)} of ${formatCount(totalFound)} GEO hits`
+            ? `Showing ${formatCount(shown)} of ${formatCount(totalFound)} ${repository} hits`
             : `Showing ${formatCount(shown)} ranked ${shown === 1 ? 'hit' : 'hits'}`}
       </strong>
       <span>
@@ -69,14 +81,14 @@ function HitSummaryBanner({ datasetSearch, candidateCount, loadingMore }) {
                 {' '}
                 · limit <code>{formatCount(maxResults)}</code>
                 {' '}
-                via <code>GEO_MAX_RESULTS</code>
+                via <code>{maxResultsEnvVar(datasetSearch)}</code>
               </>
             ) : null}
             .
           </>
         ) : (
           <>
-            All matching records retrieved from GEO were ranked below.
+            All matching records retrieved from {repository} were ranked below.
             {strictDiffers ? (
               <>
                 {' '}
@@ -284,7 +296,19 @@ function ScoreBreakdownPanel({ breakdown }) {
       {expanded && (
         <div className="score-breakdown-body">
           <div className="score-breakdown-summary">
-            <span>Score {breakdown.final_score?.toFixed(3)}</span>
+            <span>
+              Display rank {(breakdown.display_rank_score ?? breakdown.evidence_score)?.toFixed(3)}
+            </span>
+            <span>Evidence {breakdown.evidence_score?.toFixed(3)}</span>
+            <span>Tier {breakdown.rank_tier ?? breakdown.match_tier}</span>
+            {breakdown.partial_assay_subtype ? (
+              <span>Subtype {breakdown.partial_assay_subtype.replaceAll('_', ' ')}</span>
+            ) : null}
+            <span>Base {breakdown.base_score?.toFixed(3)}</span>
+            <span>
+              Adjust {breakdown.quality_adjustment >= 0 ? '+' : ''}
+              {breakdown.quality_adjustment?.toFixed(3)}
+            </span>
             <span>Status {formatMatchStatus(breakdown.match_status)}</span>
             <span>Coverage {breakdown.evidence_coverage?.toFixed(3)}</span>
             {breakdown.retrieval_strategy ? (
@@ -309,6 +333,9 @@ function ScoreBreakdownPanel({ breakdown }) {
               ? `source: ${breakdown.organism.evidence_source}`
               : null,
           )}
+          {breakdown.match_tier_note ? (
+            <p className="score-breakdown-tier-note">{breakdown.match_tier_note}</p>
+          ) : null}
           {breakdown.warnings?.length > 0 && (
             <div className="score-breakdown-warnings">
               <strong>Warnings</strong>
@@ -358,7 +385,7 @@ function DatasetCard({ candidate, rank, isNew, conceptMappings }) {
           <span className="dataset-repository">{candidate.repository}</span>
           <MatchStatusBadge status={candidate.match_status} />
         </div>
-        <span className="dataset-score">Score {candidate.score.toFixed(2)}</span>
+        <span className="dataset-score">Rank {candidate.score.toFixed(2)}</span>
       </header>
 
       <h3 className="dataset-title">{candidate.title}</h3>
@@ -577,7 +604,7 @@ export default function DatasetResultsPanel({
         <header className="dataset-results-header">
           <h2>Dataset discovery</h2>
           <p>
-            Ontology-grounded search via {datasetSearch.source || 'GEO'}
+            Ontology-grounded search via {datasetSearch.source || repositoryLabel(datasetSearch)}
             {datasetSearch.repository ? ` (${datasetSearch.repository})` : ''}
             {datasetSearch.search_term ? (
               <>
