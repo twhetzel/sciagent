@@ -4,6 +4,7 @@ Expression Atlas tool - search EMBL-EBI Gene Expression Atlas experiments.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from typing import Any
@@ -112,6 +113,9 @@ def _enrich_experiment(result: dict[str, Any]) -> dict[str, Any]:
         enriched["experiment_type"] = detail["type"]
     if detail.get("urls", {}).get("main_page"):
         enriched["url"] = f"https://www.ebi.ac.uk/gxa/{detail['urls']['main_page']}"
+    urls = detail.get("urls")
+    if isinstance(urls, dict) and urls:
+        enriched["_gxa_urls"] = urls
     return enriched
 
 
@@ -279,6 +283,9 @@ def normalize_gxa_record(
         experiment_type=experiment_type,
         assay_type=str(record.get("assay_type") or ""),
     )
+    gxa_urls = record.get("_gxa_urls")
+    if isinstance(gxa_urls, dict) and gxa_urls:
+        metadata_fields["gxa_urls_json"] = json.dumps(gxa_urls)
 
     return DatasetCandidate(
         repository=GXA_REPOSITORY,

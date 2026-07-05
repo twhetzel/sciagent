@@ -26,7 +26,7 @@ Orientation page for reviewers and new contributors. For setup, architecture, an
 
 | Area | Status |
 |------|--------|
-| File / download **manifest discovery** | Not implemented |
+| File / download **manifest discovery** | Backend access discovery for GEO and Expression Atlas; UI manifest export |
 | **BioStudies** / **ArrayExpress** | Not implemented |
 | **Local / private** data connectors | Not implemented |
 
@@ -38,3 +38,4 @@ Orientation page for reviewers and new contributors. For setup, architecture, an
 | Integrated ranking model (`evidence_score`, `rank_tier`, assay sub-tiers) | [docs/dataset-ranking.md](dataset-ranking.md) |
 | Golden-query harness, metrics, and pass/fail checks | [docs/evaluation/golden_queries.md](evaluation/golden_queries.md) |
 | Adding a new repository to the dataset pipeline | [docs/adding-a-source.md](adding-a-source.md) |
+| Dataset access UI (manifest, access details scaffolding) | [docs/dataset-access-ui.md](dataset-access-ui.md) |
