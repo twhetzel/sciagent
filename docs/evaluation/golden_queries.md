@@ -208,3 +208,5 @@ Append new strings to `GOLDEN_QUERIES` in `server/evaluation/golden_queries.py` 
 ## Related
 
 ImmPort immunology golden queries (asthma PBMC flow cytometry, influenza vaccine, peanut allergy, tuberculosis T cell) are documented separately in [immport_golden_queries.md](immport_golden_queries.md).
+
+OmicsDI multi-omics golden queries (UC colon RNA-seq, asthma lung proteomics, Alzheimer brain proteomics, breast cancer proteomics) are documented separately in [omicsdi_golden_queries.md](omicsdi_golden_queries.md).

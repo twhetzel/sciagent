@@ -13,6 +13,7 @@ GEO_REPOSITORY = "GEO"
 GXA_REPOSITORY = "Expression Atlas"
 IMMPORT_REPOSITORY = "ImmPort"
 VIVLI_REPOSITORY = "Vivli"
+OMICSDI_REPOSITORY = "OmicsDI"
 
 FetchRecordsFn = Callable[..., dict[str, Any]]
 FetchMoreFn = Callable[[DatasetSearchCursor], dict[str, Any]]
@@ -56,6 +57,12 @@ def _build_registry() -> dict[str, DatasetRepositorySpec]:
         fetch_more_immport_repository_records,
         get_immport_max_results,
         normalize_immport_records,
+    )
+    from tools.omicsdi_dataset_search import (
+        fetch_more_omicsdi_repository_records,
+        fetch_omicsdi_repository_records,
+        get_omicsdi_max_results,
+        normalize_omicsdi_records,
     )
     from tools.vivli_dataset_search import (
         fetch_more_vivli_repository_records,
@@ -108,6 +115,17 @@ def _build_registry() -> dict[str, DatasetRepositorySpec]:
             fetch_more_records=fetch_more_vivli_repository_records,
             normalize_records=normalize_vivli_records,
             resolve_max_results=get_vivli_max_results,
+        ),
+        OMICSDI_REPOSITORY: DatasetRepositorySpec(
+            repository=OMICSDI_REPOSITORY,
+            tool_name="omicsdi",
+            source_display="OmicsDI API",
+            priority=4,
+            accession_prefixes=("PXD", "MTBLS", "ST"),
+            fetch_records=fetch_omicsdi_repository_records,
+            fetch_more_records=fetch_more_omicsdi_repository_records,
+            normalize_records=normalize_omicsdi_records,
+            resolve_max_results=get_omicsdi_max_results,
         ),
     }
 

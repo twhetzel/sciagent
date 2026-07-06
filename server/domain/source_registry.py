@@ -45,7 +45,10 @@ SOURCE_REGISTRY: dict[str, SourceRegistryEntry] = {
         source_type="omics_index",
         domain="multi_omics",
         access_profile="mixed",
-        implemented=False,
+        implemented=True,
+        tool_name=OMICSDI_SOURCE_ID,
+        repository_label="OmicsDI",
+        source_label="OmicsDI API",
     ),
     VDJSERVER_SOURCE_ID: SourceRegistryEntry(
         id=VDJSERVER_SOURCE_ID,

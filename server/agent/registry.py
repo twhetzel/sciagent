@@ -271,6 +271,29 @@ class ToolRegistry:
             pass
 
         try:
+            from tools.omicsdi_dataset_search import search_omicsdi_datasets
+            self.register_tool(
+                name="omicsdi",
+                description=(
+                    "Search OmicsDI for proteomics, metabolomics, and transcriptomics datasets "
+                    "using grounded ontology concepts"
+                ),
+                function=search_omicsdi_datasets,
+                parameters={
+                    "query": {"type": "str", "required": True, "description": "Search query"},
+                    "interpreted_query": {
+                        "type": "dict",
+                        "required": False,
+                        "description": (
+                            "Interpreted disease/tissue/assay facets for multi-strategy search"
+                        ),
+                    },
+                },
+            )
+        except ImportError:
+            pass
+
+        try:
             from tools.vivli_dataset_search import search_vivli_datasets
             self.register_tool(
                 name="vivli",

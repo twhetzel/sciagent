@@ -207,7 +207,7 @@ MY_REPO_SOURCE_ID: SourceRegistryEntry(
 ),
 ```
 
-Set `implemented=False` for planned stubs (see OmicsDI / VDJServer entries). Controlled-access flows are documented in [dataset-access-ui.md](dataset-access-ui.md).
+Set `implemented=False` for planned stubs (see VDJServer entry). Controlled-access flows are documented in [dataset-access-ui.md](dataset-access-ui.md).
 
 Also add the tool name to `SOURCE_NAMES` in `server/sciagent_server/config.py` and register the sidebar tool in `server/agent/registry.py`.
 
@@ -352,6 +352,7 @@ Run: `pytest tests/test_<your_repo>_*.py tests/test_facet_phrase_resolution.py -
 | Expression Atlas | `tools/expression_atlas.py` | Yes | No (single-shot) | `test_gxa_dataset_discovery.py` | EBI Search + GXA JSON enrich |
 | ImmPort | `tools/immport_dataset_search.py` | Yes | Yes | `test_immport_*.py`, `test_asthma_immport_query.py` | `text_broad` / `adhoc`; structured evidence fields |
 | Vivli | `tools/vivli_dataset_search.py` | Yes | Yes | `test_vivli_*.py`, `test_asthma_vivli_query.py` | NIAID Discovery API; Vivli + AccessClinicalData@NIAID catalogs; NCT accessions |
+| OmicsDI | `tools/omicsdi_dataset_search.py` | Yes | Yes | `test_omicsdi_*.py`, `test_breast_cancer_omicsdi_query.py` | OmicsDI REST API; disease/tissue/omics_type facets; detail enrichment |
 | PubMed | `tools/pubmed.py` | — | — | — | Simple literature source |
 
 ---

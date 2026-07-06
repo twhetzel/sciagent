@@ -65,6 +65,7 @@ Queries like `BRCA1 gene`, `marfan syndrome variants`, or `Find RNA-seq datasets
 | `expression_atlas` | EMBL-EBI Expression Atlas (EBI Search + GXA JSON API) | None; dataset-discovery pipeline when GEO is excluded or for routed dataset queries |
 | `immport` | ImmPort Shared Data API (study metadata search) | None; integrated dataset-discovery pipeline with GEO and Expression Atlas |
 | `vivli` | NIAID Data Ecosystem Discovery API (Vivli + AccessClinicalData@NIAID) | None; controlled-access clinical trial metadata in dataset-discovery pipeline |
+| `omicsdi` | OmicsDI REST API (proteomics, metabolomics, transcriptomics index) | None; multi-omics dataset-discovery pipeline |
 | `mygene` | MyGene.info v3 | None |
 | `uniprot` | UniProt REST | None |
 | `clinvar` | NCBI E-utilities (ClinVar) | Same NCBI env vars as PubMed |
@@ -394,7 +395,7 @@ See [`.env.example`](.env.example). Key variables:
 |----------|---------|
 | `SCIAGENT_HOST` / `SCIAGENT_PORT` | API bind address |
 | `SCIAGENT_CORS_ORIGINS` | Allowed browser origins (comma-separated) |
-| `SCIAGENT_EXCLUDED_SOURCES` | Optional blocklist of external data sources to skip (`pubmed`, `openalex`, `europepmc`, `expression_atlas`, `immport`, `vivli`, `mygene`, `uniprot`, `clinvar`, `alphafold`, `geo_dataset_search`). Excluding `geo_dataset_search` routes dataset-style queries to Expression Atlas, ImmPort, and Vivli when enabled; with all enabled, GEO, GXA, ImmPort, and Vivli results are merged and ranked together. Planned NIAID sources (`omicsdi`, `vdjserver`) appear in `GET /api/config` but are not enabled until connectors ship. |
+| `SCIAGENT_EXCLUDED_SOURCES` | Optional blocklist of external data sources to skip (`pubmed`, `openalex`, `europepmc`, `expression_atlas`, `immport`, `vivli`, `omicsdi`, `mygene`, `uniprot`, `clinvar`, `alphafold`, `geo_dataset_search`). Excluding `geo_dataset_search` routes dataset-style queries to Expression Atlas, ImmPort, Vivli, and OmicsDI when enabled; with all enabled, GEO, GXA, ImmPort, Vivli, and OmicsDI results are merged and ranked together. Planned NIAID sources (`vdjserver`) appear in `GET /api/config` but are not enabled until connectors ship. |
 | `SCIAGENT_EXCLUDED_TOOLS` | Optional blocklist of agent tools to skip (`summarize`) |
 | `NCBI_EMAIL` | **Recommended.** Contact email for NCBI E-utilities (PubMed, ClinVar, GEO); `PUBMED_EMAIL` fallback |
 | `NCBI_API_KEY` | Optional NCBI API key for higher E-utilities rate limits |
