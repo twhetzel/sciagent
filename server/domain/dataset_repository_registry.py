@@ -169,6 +169,19 @@ def is_repository_tool_enabled(registry: Any, repository: str) -> bool:
     return registry.get_tool(spec.tool_name) is not None
 
 
+def resolve_enabled_dataset_repositories(registry: Any) -> list[str]:
+    """Return repository labels whose pipeline tools are registered, in merge priority order."""
+    enabled = [
+        spec
+        for spec in sorted(
+            get_dataset_repository_registry().values(),
+            key=lambda item: item.priority,
+        )
+        if registry.get_tool(spec.tool_name) is not None
+    ]
+    return [spec.repository for spec in enabled]
+
+
 def any_load_more_enabled(registry: Any) -> bool:
     return any(
         spec.supports_load_more and registry.get_tool(spec.tool_name) is not None

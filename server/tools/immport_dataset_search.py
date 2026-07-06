@@ -304,6 +304,19 @@ def _resolve_search_queries(
     return []
 
 
+def _resolve_text_broad_total_found(
+    strategy_totals: dict[str, int],
+    *,
+    include_text_broad: bool,
+) -> int | None:
+    if not include_text_broad:
+        return None
+    total = strategy_totals.get(TEXT_BROAD_STRATEGY)
+    if total is None:
+        return None
+    return int(total)
+
+
 def _strategy_has_remaining(
     strategy: str,
     strategy_offsets: dict[str, int],
@@ -536,6 +549,10 @@ def _build_immport_cursor(
         seen_accessions=sorted(seen_accessions),
         total_found=total_found,
         primary_total_found=primary_total_found,
+        text_broad_total_found=_resolve_text_broad_total_found(
+            strategy_totals,
+            include_text_broad=include_text_broad,
+        ),
         max_results=max_results,
         search_term=primary_search_term,
         repository=IMMPORT_REPOSITORY,
@@ -726,12 +743,17 @@ def fetch_immport_repository_records(
     )
 
     retrievable_total = len(seen_accessions) if not cursor.has_more else None
+    text_broad_total_found = _resolve_text_broad_total_found(
+        strategy_totals,
+        include_text_broad=include_text_broad,
+    )
 
     payload: dict[str, Any] = {
         "search_term": primary_search_term,
         "search_strategies": strategy_summaries,
         "total_found": max_total_found,
         "primary_total_found": primary_total_found,
+        "text_broad_total_found": text_broad_total_found,
         "retrievable_total": retrievable_total,
         "include_text_broad": include_text_broad,
         "max_results": max_results,
@@ -829,6 +851,7 @@ def fetch_more_immport_repository_records(cursor: DatasetSearchCursor) -> dict[s
         "load_more_cursor": updated_cursor.model_dump(),
         "total_found": cursor.total_found,
         "primary_total_found": cursor.primary_total_found,
+        "text_broad_total_found": updated_cursor.text_broad_total_found,
         "retrievable_total": len(seen_accessions) if not updated_cursor.has_more else None,
         "include_text_broad": cursor.include_text_broad,
         "source": "ImmPort",

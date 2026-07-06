@@ -7,6 +7,7 @@ from domain.dataset_repository_registry import (
     get_repository_spec,
     pick_load_more_cursor,
     repository_supports_load_more,
+    resolve_enabled_dataset_repositories,
     supported_repositories,
 )
 
@@ -50,3 +51,22 @@ def test_new_repository_spec_requires_tool_name_and_handlers():
     assert spec.fetch_more_records is not None
     assert spec.normalize_records is not None
     assert spec.resolve_max_results is not None
+
+
+def test_resolve_enabled_dataset_repositories_respects_registry_and_priority():
+    class FakeRegistry:
+        def __init__(self, enabled: set[str]):
+            self._enabled = enabled
+
+        def get_tool(self, name: str):
+            return object() if name in self._enabled else None
+
+    all_enabled = resolve_enabled_dataset_repositories(
+        FakeRegistry({"geo_dataset_search", "expression_atlas", "immport"})
+    )
+    assert all_enabled == [GEO_REPOSITORY, GXA_REPOSITORY, IMMPORT_REPOSITORY]
+
+    without_geo = resolve_enabled_dataset_repositories(
+        FakeRegistry({"expression_atlas", "immport"})
+    )
+    assert without_geo == [GXA_REPOSITORY, IMMPORT_REPOSITORY]

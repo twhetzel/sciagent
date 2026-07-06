@@ -106,7 +106,10 @@ def _match_bioportal_item(term: str, item: dict[str, Any]) -> str | None:
 
 
 def _extract_bioportal_curie(item: dict[str, Any]) -> str:
-    obo_match = re.search(r"(MONDO|HP|GO|NCBITaxon|CHEBI|UBERON|OBI)_\d+", item.get("@id", ""))
+    obo_match = re.search(
+        r"(MONDO|DOID|EFO|HP|GO|NCBITaxon|CHEBI|UBERON|OBI)_\d+",
+        item.get("@id", ""),
+    )
     if obo_match:
         prefix, number = obo_match.group(0).split("_", 1)
         if prefix == "NCBITaxon":

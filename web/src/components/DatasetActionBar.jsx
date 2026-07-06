@@ -1,4 +1,5 @@
 import {
+  formatTextBroadTotalsLine,
   isImmPortTextBroadEnabled,
   summarizeRetrievalCounts,
 } from '../utils/datasetSearchCopy.js'
@@ -32,7 +33,11 @@ export default function DatasetActionBar({
     retrievableTotal != null &&
     total > retrievableTotal
   const textBroadEnabled = isImmPortTextBroadEnabled(datasetSearch)
-  const { supplemental, facetRetrieved } = summarizeRetrievalCounts(datasetSearch)
+  const { supplemental, facetRetrieved, facetTotal, textBroadTotal } =
+    summarizeRetrievalCounts(datasetSearch)
+  const repositoryTotalsLine = textBroadEnabled
+    ? formatTextBroadTotalsLine(facetTotal, textBroadTotal, formatCount)
+    : `${formatCount(total)} ${repository} facet hits`
 
   return (
     <div className="dataset-action-bar" aria-live="polite" aria-busy={loadingMore}>
@@ -42,8 +47,8 @@ export default function DatasetActionBar({
           {textBroadEnabled && !datasetSearch.has_more && supplemental > 0
             ? ` · ${formatCount(facetRetrieved)} facet + ${formatCount(supplemental)} supplemental`
             : null}
-          {textBroadEnabled && datasetSearch.has_more
-            ? ` · ${formatCount(total)} facet hits`
+          {textBroadEnabled && (datasetSearch.has_more || textBroadTotal != null)
+            ? ` · ${repositoryTotalsLine}`
             : null}
           {!textBroadEnabled && datasetSearch.has_more && total > retrieved
             ? ` · ${formatCount(total)} ${repository} facet hits`
@@ -57,7 +62,12 @@ export default function DatasetActionBar({
             ? ` · ${formatCount(total)} facet reported, ${formatCount(retrievableTotal)} retrievable`
             : null}
         </strong>
-        {textBroadEnabled && datasetSearch.has_more ? (
+        {textBroadEnabled && datasetSearch.has_more && textBroadTotal != null ? (
+          <span className="dataset-action-bar-meta">
+            Load more paginates facet strategies first, then{' '}
+            <code>text_broad</code> ({formatCount(textBroadTotal)} hits)
+          </span>
+        ) : textBroadEnabled && datasetSearch.has_more ? (
           <span className="dataset-action-bar-meta">
             Load more may include <code>text_broad</code> free-text supplement
           </span>

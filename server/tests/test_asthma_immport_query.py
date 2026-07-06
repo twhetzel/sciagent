@@ -224,10 +224,12 @@ def test_fetch_immport_repository_records_respects_include_text_broad_flag():
     assert result["search_strategies"][-1]["strategy"] == TEXT_BROAD_STRATEGY
     assert result["search_strategies"][-1]["supplemental"] is True
     assert result["include_text_broad"] is True
+    assert result["text_broad_total_found"] == 55
     assert result["search_term"] == "asthma Flow Cytometry PBMC"
     assert result["has_more"] is True
     assert result["load_more_cursor"] is not None
     assert result["load_more_cursor"]["include_text_broad"] is True
+    assert result["load_more_cursor"]["text_broad_total_found"] == 55
 
 
 def test_fetch_immport_repository_records_skips_text_broad_when_disabled():
@@ -253,4 +255,5 @@ def test_fetch_immport_repository_records_skips_text_broad_when_disabled():
 
     assert len(result["search_strategies"]) == 4
     assert result["include_text_broad"] is False
+    assert result.get("text_broad_total_found") is None
     assert result["load_more_cursor"]["include_text_broad"] is False

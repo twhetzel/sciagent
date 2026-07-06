@@ -30,6 +30,10 @@ User query
 
 The UI (`DatasetResultsPanel`) activates when `POST /api/query` returns `dataset_search` (not null). Chat-only tool output will **not** use the ranked dataset panel.
 
+**Related docs:** [dataset-access-ui.md](dataset-access-ui.md) (controlled-access badges and manifest export), [dataset-ranking.md](dataset-ranking.md) (ranking and evidence scoring).
+
+---
+
 ### Shared multi-strategy search
 
 All dataset pipeline sources must use the shared facet strategies in `domain/facet_search_strategies.py`:
@@ -47,7 +51,50 @@ Build queries with `build_facet_search_queries(interpreted=..., concept_mappings
 
 **Organism / species:** only set `InterpretedQuery.organism` when the user names an organism (e.g. `human`, `Homo sapiens`, `mouse`). Do **not** default to human for disease-only queries — repository adapters pass species filters only when `organism` is present (ImmPort, Expression Atlas, etc.).
 
-**ImmPort supplemental text:** after facet strategies, append a `text_broad` strategy (`term` only, no facet params). Mark it `supplemental: true` in strategy summaries. Use facet-only max for `total_found` (NDE parity); do not combine `term` with facet filters in one request.
+### Ontology grounding (OBO Foundry domains)
+
+Facet slots map to **OBO Foundry registry domains** as the starting policy for which ontologies to search and accept. The single source of truth is `domain/ontology_providers/obo_foundry_policy.py`:
+
+| Facet slot | OBO Foundry domain(s) | Primary ontologies |
+|------------|----------------------|-------------------|
+| disease | `health`, `phenotype` (HP fallback) | MONDO, DOID, EFO (+ HP fallback) |
+| tissue / biosample | `anatomy and development` | UBERON, CL |
+| assay | `investigations`, `biological systems` | OBI, GO |
+| organism | `organisms` | NCBITaxon |
+| phenotype | `phenotype` | HP |
+
+Add a new ontology by appending an `OntologyBinding` with the correct `obo_foundry_domain` and `tier`. Derived tables (`FACET_ONTOLOGIES`, `SLOT_CURIE_PREFIXES`, primary/fallback tiers) are built from that registry. Non-Foundry ontologies (e.g. EFO) may be listed with `obo_foundry_domain=None` when repository metadata depends on them.
+
+#### Adding facet terms (when users query concepts your repo supports)
+
+Interpretation and grounding happen **before** repository search and are shared across all dataset sources. When a new repository exposes controlled vocabulary terms users will type in queries (e.g. ImmPort `lkSampleType` values like **T cell**, **PBMC**), wire them through this chain:
+
+| Step | File | What to add |
+|------|------|-------------|
+| 1. Ontology policy | `domain/ontology_providers/obo_foundry_policy.py` | `OntologyBinding` if the concept needs a new ontology prefix (e.g. CL for cell types) |
+| 2. Query interpretation | `domain/tissue_anatomy.py` or `domain/ontology_providers/curated.py` | Regex pattern + curated seed (canonical label, CURIE, synonyms) so phrase/regex resolution fills the facet slot |
+| 3. Repository search | `domain/repository_vocab/<repo>_vocab.py` | Map grounded label → API controlled vocabulary name (static override and/or lookup table resolver) |
+| 4. Evidence | Adapter `normalize_*` | Copy the same CV strings into `metadata_fields` — see [Repository-aware evidence](#repository-aware-evidence-required-for-cv-backed-sources) |
+| 5. Tests | See [Test templates](#test-templates) | Interpretation + grounding + vocab + structured evidence (not title keywords alone) |
+
+**Example (T cell on ImmPort):** CL binding in `obo_foundry_policy.py` → regex in `tissue_anatomy.py` → `("tissue", "t cell"): "T cell"` in `immport_vocab.py` → `biosample_type` on normalized records → `test_facet_phrase_resolution.py` + `test_immport_evidence_extraction.py`.
+
+Run `pytest tests/test_obo_foundry_policy.py tests/test_facet_phrase_resolution.py` after ontology changes.
+
+#### ImmPort-only: supplemental and fallback text search
+
+These behaviors are implemented in `tools/immport_dataset_search.py` today; other repositories should adopt only when their API has an equivalent free-text mode.
+
+| Strategy | When it runs | User control |
+|----------|--------------|--------------|
+| **`text_broad`** | After facet strategies, when at least one facet was resolved | UI checkbox **Include text_broad free-text supplement** (`include_text_broad`; default from `SCIAGENT_IMMPORT_TEXT_BROAD`) |
+| **`adhoc`** | When **no** facets were resolved — last-resort compact free-text (`term` only) | Runs regardless of checkbox (today); facet strategies are skipped |
+
+ImmPort `text_broad` rules:
+
+- Append after `strict` → `broad_3`; mark `supplemental: true` in strategy summaries.
+- Use `term` only — do **not** combine with facet params in one request (NDE/CDT parity).
+- Set `total_found` / `primary_total_found` from facet strategies only; return **`text_broad_total_found`** separately so the UI can show dual counts (e.g. 312 facet · 1,328 text_broad).
 
 ### Repository-aware evidence (required for CV-backed sources)
 
@@ -89,9 +136,31 @@ Return per-strategy metadata:
 
 ---
 
-## Central registry (required wiring step)
+## Wiring map (all touchpoints)
 
-**All dataset pipeline repositories are registered in one place:**
+Adding a dataset pipeline source touches **several registries**. The adapter module alone is not enough.
+
+| # | File | Purpose | Required? |
+|---|------|---------|-----------|
+| 1 | `server/tools/<source>_dataset_search.py` | Search, normalize, pagination, `dataset_search` payload shape | **Yes** |
+| 2 | `server/domain/dataset_repository_registry.py` | Pipeline dispatch, load-more routing, merge priority | **Yes** |
+| 3 | `server/agent/registry.py` | Register tool so the agent can invoke the source | **Yes** |
+| 4 | `server/sciagent_server/config.py` → `SOURCE_NAMES` | Enable/disable via `SCIAGENT_EXCLUDED_SOURCES` | **Yes** |
+| 5 | `server/domain/source_registry.py` | **`GET /api/config`** source list (display name, access profile, implemented flag) | **Yes** for UI visibility |
+| 6 | `server/agent/orchestrator.py` | Multi-source dataset discovery uses enabled repos from the dataset registry automatically | **No manual edit** — ensure `tool_name` matches `registry.py` |
+| 7 | `domain/repository_vocab/<repo>_vocab.py` | CV mapping for facet search params | When API uses controlled vocab |
+| 8 | `domain/tissue_anatomy.py` / `curated.py` / `obo_foundry_policy.py` | New query terms users will type | When repo introduces new facet labels |
+| 9 | `.env.example`, `README.md`, this doc | Env vars, example query, reference table row | **Yes** |
+
+**Orchestrator:** `_resolve_dataset_repositories()` reads `dataset_repository_registry.py` and returns every repository whose `tool_name` is registered (respecting `SCIAGENT_EXCLUDED_SOURCES`), in merge **priority** order. No hardcoded repo list in the orchestrator.
+
+**What you usually do *not* edit:** `agent/orchestrator.py` repository list, `agent/dataset_discovery.py` dispatch (reads dataset registry), `main.py` load-more endpoint (routes via registry), dataset UI load-more button (generic).
+
+---
+
+## Central registry (dataset pipeline dispatch)
+
+**All dataset pipeline repositories are registered in:**
 
 `server/domain/dataset_repository_registry.py`
 
@@ -104,7 +173,7 @@ This registry drives:
 - Multi-repository cursor selection (highest-priority repo with pagination)
 - Tool enablement checks via `tool_name` + `SCIAGENT_EXCLUDED_SOURCES`
 
-When you add a source, **add one `DatasetRepositorySpec` entry**. The pipeline, API endpoint, and UI load-more button work automatically once the adapter implements pagination correctly.
+When you add a source, **add one `DatasetRepositorySpec` entry** plus the other rows in the [wiring map](#wiring-map-all-touchpoints) above.
 
 ```python
 MY_REPO: DatasetRepositorySpec(
@@ -119,6 +188,26 @@ MY_REPO: DatasetRepositorySpec(
     resolve_max_results=get_my_repo_max_results,
 )
 ```
+
+### UI / API config entry (`source_registry.py`)
+
+Add a `SourceRegistryEntry` in `server/domain/source_registry.py` so **`GET /api/config`** exposes the source to the frontend (Resources panel, access profile, enabled state):
+
+```python
+MY_REPO_SOURCE_ID: SourceRegistryEntry(
+    id="my_repo",                        # matches tool_name / exclusion id
+    display_name="My Repository",
+    source_type="dataset_repository",
+    domain="immunology",               # human-readable grouping for UI
+    access_profile="open_or_registered", # see dataset-access-ui.md
+    implemented=True,
+    tool_name="my_repo",
+    repository_label="My Repository",    # must match DatasetRepositorySpec.repository
+    source_label="My Repository API",
+),
+```
+
+Set `implemented=False` for planned stubs (see OmicsDI / VDJServer entries). Controlled-access flows are documented in [dataset-access-ui.md](dataset-access-ui.md).
 
 Also add the tool name to `SOURCE_NAMES` in `server/sciagent_server/config.py` and register the sidebar tool in `server/agent/registry.py`.
 
@@ -163,6 +252,8 @@ When GEO + ImmPort (or others) run together, **one cursor** is returned — from
 
 ## Checklist: dataset pipeline source
 
+Use this with the [wiring map](#wiring-map-all-touchpoints). Check off every row before opening a PR.
+
 ### 1. Tool / adapter module (`server/tools/<source>_dataset_search.py` or extend existing)
 
 - [ ] `fetch_<repo>_repository_records(concept_mappings, max_results, query, interpreted_query, ...)`
@@ -172,45 +263,46 @@ When GEO + ImmPort (or others) run together, **one cursor** is returned — from
 - [ ] `normalize_<repo>_record()` → `DatasetCandidate` with correct `repository` field
 - [ ] `collect_metadata_fields()` for evidence extraction (title, summary, taxon, assay hints)
 - [ ] **Repository-aware evidence:** copy structured facet values into `metadata_fields` (`condition_or_disease`, `biosample_type`, `assay_method` when applicable) — see [Repository-aware evidence](#repository-aware-evidence-required-for-cv-backed-sources)
-- [ ] Tests that structured facet fields alone produce supported facet evidence (not title/summary keywords only)
+- [ ] If source has controlled access metadata, wire access fields for [dataset-access-ui.md](dataset-access-ui.md)
 - [ ] Env var for max results (e.g. `MY_REPO_MAX_RESULTS`)
-- [ ] Unit tests with mocked HTTP (initial search **and** load-more)
+- [ ] Unit tests with mocked HTTP — see [Test templates](#test-templates)
 
 ### 2. Register in `domain/dataset_repository_registry.py`
 
 - [ ] Add `DatasetRepositorySpec` with `tool_name`, handlers, `priority`, `accession_prefixes`
 - [ ] Set `fetch_more_records` when paginated; leave `None` otherwise
 
-### 3. Wire into orchestrator (`server/agent/orchestrator.py`)
-
-- [ ] Add repository to `_resolve_dataset_repositories()` (searches all enabled repos)
-- [ ] Dataset queries call `_run_dataset_discovery(query, repositories=...)`
-- [ ] Do **not** also route the same query through the simple tool path in `_plan()`
-
-No changes needed in `agent/dataset_discovery.py` dispatch if the registry entry is complete.
-
-### 4. Registry + deployment config
+### 3. Agent tool + deployment config
 
 - [ ] Register chat/sidebar tool in `server/agent/registry.py`
 - [ ] Add to `SOURCE_NAMES` in `server/sciagent_server/config.py`
+- [ ] Add `SourceRegistryEntry` in `server/domain/source_registry.py` (`implemented=True`, matching `repository_label`)
 - [ ] Document in `.env.example` and README tool inventory
 
-### 5. Frontend (repository-aware labels)
+### 4. Orchestrator routing
 
-- [ ] Use `datasetSearch.repository` instead of hardcoded "GEO" in:
-  - `web/src/components/DatasetResultsPanel.jsx`
-  - `web/src/components/DatasetActionBar.jsx`
-  - `web/src/components/TracePanel.jsx` (optional)
+- [ ] Confirm `tool_name` in `DatasetRepositorySpec` matches the name registered in `registry.py` (orchestrator auto-includes enabled repos)
+- [ ] Confirm dataset queries use `_run_dataset_discovery()` only — **do not** also route the same query through the simple tool path in `_plan()`
+
+`agent/dataset_discovery.py` dispatch reads the dataset registry; no changes there if step 2 is complete.
+
+### 5. Facet terms and vocabulary (when the repo uses CV facets)
+
+- [ ] `domain/repository_vocab/<repo>_vocab.py` — search-time facet param mapping
+- [ ] Curated aliases / anatomy patterns if users query terms not in OLS — see [Adding facet terms](#adding-facet-terms-when-users-query-concepts-your-repo-supports)
+- [ ] Tests: vocab resolver + interpretation for at least one representative query
+
+### 6. Frontend (repository-aware labels)
+
+- [ ] Use `datasetSearch.repository` instead of hardcoded "GEO" in result panels / action bar
 - [ ] Load-more needs no source-specific UI code — `DatasetActionBar` checks `has_more && load_more_cursor`
-
-### 6. Optional: repository vocabulary (Option C)
-
-- [ ] If the API uses controlled vocabularies, add `domain/repository_vocab/<repo>_vocab.py` and map facets before search
+- [ ] No frontend change required for `/api/config` if `source_registry.py` entry is correct
 
 ### 7. Documentation
 
 - [ ] README example query
-- [ ] This file — add row to reference implementations table below
+- [ ] This file — add row to [Reference implementations](#reference-implementations) table
+- [ ] [dataset-access-ui.md](dataset-access-ui.md) if access discovery applies
 
 ---
 
@@ -226,14 +318,40 @@ Use only when the source is **not** an omics dataset repository.
 
 ---
 
+## Test templates
+
+Copy patterns from existing tests rather than starting from scratch.
+
+| Concern | ImmPort examples | GEO / shared examples |
+|---------|------------------|------------------------|
+| Adapter HTTP + strategies | `tests/test_immport_dataset_search.py` | `tests/test_geo_search_strategies.py` |
+| End-to-end query + search params | `tests/test_asthma_immport_query.py` | — |
+| Repository vocab resolver | `tests/test_immport_vocab.py` | — |
+| Structured facet evidence | `tests/test_immport_evidence_extraction.py` | `tests/test_ranking_facet_quality.py` |
+| Load-more cursor | `tests/test_dataset_load_more.py` | `tests/test_dataset_load_more.py` |
+| Interpretation + grounding | `tests/test_facet_phrase_resolution.py` | `tests/test_tissue_anatomy.py` |
+| Ontology policy | `tests/test_obo_foundry_policy.py` | `tests/test_ontology_grounding_priority.py` |
+| Multi-repo merge | — | `tests/test_multi_repository_dataset_discovery.py` |
+
+**Minimum bar for a new CV-backed repository:**
+
+1. Mocked adapter test — strategies, params, pagination (initial + load-more if applicable).
+2. Vocab test — grounded label maps to API facet value.
+3. Evidence test — `metadata_fields` with structured CV alone yields **Supported** in annotation (no title keyword required).
+4. One integration-style test — representative user query through `interpret_dataset_query` + adapter search param builder.
+
+Run: `pytest tests/test_<your_repo>_*.py tests/test_facet_phrase_resolution.py -q`
+
+---
+
 ## Reference implementations
 
-| Source | Module | Registry | Load-more | Notes |
-|--------|--------|----------|-----------|-------|
-| GEO | `tools/geo_dataset_search.py` | Yes | Yes | NCBI `retstart` per strategy |
-| Expression Atlas | `tools/expression_atlas.py` | Yes | No (single-shot) | EBI Search + GXA JSON enrich |
-| ImmPort | `tools/immport_dataset_search.py` | Yes | Yes | Shared Data API `fromRecord`; structured facet evidence via `assay_method`, `biosample_type`, `condition_or_disease` |
-| PubMed | `tools/pubmed.py` | — | — | Simple literature source |
+| Source | Module | Registry | Load-more | Tests | Notes |
+|--------|--------|----------|-----------|-------|-------|
+| GEO | `tools/geo_dataset_search.py` | Yes | Yes | `test_geo_search_strategies.py`, `test_geo_max_results.py` | NCBI `retstart` per strategy |
+| Expression Atlas | `tools/expression_atlas.py` | Yes | No (single-shot) | `test_gxa_dataset_discovery.py` | EBI Search + GXA JSON enrich |
+| ImmPort | `tools/immport_dataset_search.py` | Yes | Yes | `test_immport_*.py`, `test_asthma_immport_query.py` | `text_broad` / `adhoc`; structured evidence fields |
+| PubMed | `tools/pubmed.py` | — | — | — | Simple literature source |
 
 ---
 
@@ -248,7 +366,7 @@ When a query matches `is_dataset_discovery_query()`:
 
 If only one repository is enabled, behavior is unchanged (single-source pipeline).
 
-Extend `_resolve_dataset_repositories()` when adding new pipeline sources.
+Enabled repositories are resolved from `dataset_repository_registry.py` via `resolve_enabled_dataset_repositories()` (see [Wiring map](#wiring-map-all-touchpoints)).
 
 ---
 
@@ -270,16 +388,15 @@ Max results env: <VAR_NAME>=10
 Trigger: dataset-discovery queries via is_dataset_discovery_query()
 
 Follow docs/adding-a-source.md completely:
+- Wiring map: adapter, dataset_repository_registry, registry.py, SOURCE_NAMES, source_registry
 - Multi-strategy facet search (FACET_SEARCH_STRATEGIES)
-- normalize → DatasetCandidate
-- repository-aware evidence (structured facet fields in metadata_fields)
+- Facet terms: obo_foundry_policy + curated/tissue_anatomy + repository_vocab when needed
+- normalize → DatasetCandidate + repository-aware evidence (structured metadata_fields)
 - fetch_more + DatasetSearchCursor when API paginates
-- Register DatasetRepositorySpec in domain/dataset_repository_registry.py
-- orchestrator routing (_resolve_dataset_repositories)
-- dataset_search payload (not chat-only)
-- repository-aware frontend labels
-- tests for adapter + run_dataset_discovery + load-more
-- README + .env.example
+- dataset_search payload (not chat-only); text_broad only if API supports ImmPort-style supplemental search
+- Tests: adapter + vocab + structured evidence + representative query (see Test templates section)
+- README + .env.example + row in Reference implementations table
+- dataset-access-ui.md if controlled access applies
 ```
 
 ---

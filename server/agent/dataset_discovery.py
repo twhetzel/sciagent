@@ -267,6 +267,7 @@ def _build_dataset_search_result(
         retrieved_count=len(ranked),
         retrievable_total=search_result.get("retrievable_total"),
         include_text_broad=search_result.get("include_text_broad"),
+        text_broad_total_found=search_result.get("text_broad_total_found"),
         load_more_cursor=cursor,
     )
 
@@ -354,6 +355,10 @@ def load_more_dataset_search(
         "include_text_broad": more_result.get(
             "include_text_broad",
             cursor.include_text_broad,
+        ),
+        "text_broad_total_found": more_result.get(
+            "text_broad_total_found",
+            cursor.text_broad_total_found,
         ),
         "max_results": cursor.max_results,
         "source": more_result.get("source", spec.source_display),

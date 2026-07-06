@@ -26,6 +26,12 @@ STATIC_FACET_OVERRIDES: dict[tuple[str, str], str] = {
     ("assay", "flow cytometry"): "Flow Cytometry",
     ("tissue", "pbmc"): "PBMC",
     ("tissue", "pbmcs"): "PBMC",
+    ("tissue", "t cell"): "T cell",
+    ("tissue", "t cells"): "T cell",
+    ("tissue", "b cell"): "B cell",
+    ("tissue", "b cells"): "B cell",
+    ("tissue", "nk cell"): "NK cell",
+    ("tissue", "nk cells"): "NK cell",
     ("organism", "human"): "Homo sapiens",
     ("organism", "homo sapiens"): "Homo sapiens",
 }

@@ -39,6 +39,7 @@ GENERIC_PHRASES = frozenset(
         "studies",
         "expression",
         "profiling",
+        "immune response",
     }
 )
 
@@ -60,6 +61,11 @@ def _phrase_words(phrase: str) -> set[str]:
     return {_normalize_text(word) for word in WORD_PATTERN.findall(phrase)}
 
 
+def _phrase_contains_stopword(phrase: str) -> bool:
+    """Skip n-grams that mix facet terms with query boilerplate (e.g. datasets for)."""
+    return bool(_phrase_words(phrase) & QUERY_STOPWORDS)
+
+
 def _candidate_phrases(query: str, interpreted: InterpretedQuery) -> list[str]:
     """Return query n-grams longest-first, excluding stopwords and filled facets."""
     normalized_query = normalize_query_for_phrases(query)
@@ -78,6 +84,8 @@ def _candidate_phrases(query: str, interpreted: InterpretedQuery) -> list[str]:
             if not normalized or normalized in seen:
                 continue
             if normalized in QUERY_STOPWORDS or normalized in GENERIC_PHRASES:
+                continue
+            if _phrase_contains_stopword(phrase):
                 continue
             if normalized in filled_values:
                 continue
@@ -187,10 +195,10 @@ def resolve_phrase_facets(query: str, interpreted: InterpretedQuery) -> Interpre
                     phrase,
                     allow_dynamic=can_use_dynamic,
                 )
-                if used_dynamic:
-                    dynamic_attempts += 1
                 if not grounded:
                     continue
+                if used_dynamic:
+                    dynamic_attempts += 1
 
                 mapping = grounded[0]
                 if not _accept_phrase_grounding(mapping, query=query, phrase=phrase, slot=slot):
@@ -200,9 +208,9 @@ def resolve_phrase_facets(query: str, interpreted: InterpretedQuery) -> Interpre
                 consumed_words.update(_phrase_words(phrase))
                 break
 
-    # Prefer specific multi-word curated matches before broader dynamic lookup.
+    # Prefer specific multi-word phrases before shorter subsets (e.g. peanut allergy before allergy).
     try_fill(allow_dynamic=False, phrase_order=_sort_phrases_longest_first(candidates))
-    try_fill(allow_dynamic=True, phrase_order=_sort_phrases_shortest_first(candidates))
+    try_fill(allow_dynamic=True, phrase_order=_sort_phrases_longest_first(candidates))
 
     if not updates:
         return interpreted

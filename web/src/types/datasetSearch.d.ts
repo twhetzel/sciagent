@@ -93,6 +93,7 @@ export interface DatasetSearchResult {
   retrieved_count?: number
   retrievable_total?: number | null
   include_text_broad?: boolean | null
+  text_broad_total_found?: number | null
   load_more_cursor?: unknown
   agent_context?: {
     markdown?: string

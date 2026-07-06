@@ -11,6 +11,7 @@ import {
 } from '../utils/datasetAccess.js'
 import { FacetStatusInfoTooltip, FacetStatusLabelTooltip } from './FacetStatusTooltip.jsx'
 import {
+  formatTextBroadTotalsLine,
   isImmPortTextBroadEnabled,
   summarizeRetrievalCounts,
 } from '../utils/datasetSearchCopy.js'
@@ -127,20 +128,25 @@ function HitSummaryBanner({ datasetSearch, candidateCount, loadingMore }) {
     retrievableTotal != null &&
     totalFound > retrievableTotal
   const textBroadEnabled = isImmPortTextBroadEnabled(datasetSearch)
-  const { supplemental, facetRetrieved, facetTotal } =
+  const { supplemental, facetRetrieved, facetTotal, textBroadTotal } =
     summarizeRetrievalCounts(datasetSearch)
+  const repositoryTotalsLine = textBroadEnabled
+    ? formatTextBroadTotalsLine(facetTotal, textBroadTotal, formatCount)
+    : `${formatCount(totalFound)} ${repository} hits`
 
   let headline
   if (loadingMore) {
     headline = textBroadEnabled
-      ? `Loading more… (${formatCount(shown)} ranked · ${formatCount(facetRetrieved)} of ${formatCount(facetTotal)} facet hits retrieved)`
+      ? `Loading more… (${formatCount(shown)} ranked · ${formatTextBroadTotalsLine(facetTotal, textBroadTotal, formatCount)})`
       : `Loading more… (${formatCount(shown)} ranked so far)`
   } else if (hasMore) {
     headline = textBroadEnabled
-      ? `Showing ${formatCount(shown)} ranked · ${formatCount(facetRetrieved)} of ${formatCount(facetTotal)} facet hits retrieved`
+      ? `Showing ${formatCount(shown)} ranked · ${repositoryTotalsLine}`
       : `Showing ${formatCount(shown)} of ${formatCount(totalFound)} ${repository} hits`
   } else if (textBroadEnabled && supplemental > 0) {
     headline = `Showing ${formatCount(shown)} ranked · ${formatCount(facetRetrieved)} facet + ${formatCount(supplemental)} supplemental`
+  } else if (textBroadEnabled && textBroadTotal != null) {
+    headline = `Showing ${formatCount(shown)} ranked · ${repositoryTotalsLine}`
   } else {
     headline = `Showing ${formatCount(shown)} ranked ${shown === 1 ? 'hit' : 'hits'}`
   }
@@ -155,7 +161,13 @@ function HitSummaryBanner({ datasetSearch, candidateCount, loadingMore }) {
         {hasMore ? (
           <>
             Retrieved and ranked the top matches by evidence coverage
-            {textBroadEnabled ? (
+            {textBroadEnabled && textBroadTotal != null ? (
+              <>
+                {' '}
+                · <code>text_broad</code> free-text reports {formatCount(textBroadTotal)}{' '}
+                {textBroadTotal === 1 ? 'hit' : 'hits'} (separate from facet counts above)
+              </>
+            ) : textBroadEnabled ? (
               <>
                 {' '}
                 · supplemental free-text (<code>text_broad</code>) may add studies beyond

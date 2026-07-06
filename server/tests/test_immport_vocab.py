@@ -27,6 +27,7 @@ def test_resolve_uses_exact_lookup_name():
 
     assert vocab.resolve("disease", "asthma") == "asthma"
     assert vocab.resolve("tissue", "PBMC") == "PBMC"
+    assert vocab.resolve("tissue", "t cell") == "T cell"
     assert vocab.resolve("assay", "flow cytometry") == "Flow Cytometry"
 
 

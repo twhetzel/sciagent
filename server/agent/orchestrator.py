@@ -89,15 +89,10 @@ class AgentOrchestrator:
             return f"Error: {str(e)}", self.tracer.get_traces(), None
 
     def _resolve_dataset_repositories(self) -> list[str]:
-        """Return all enabled dataset repositories (GEO, Expression Atlas, ImmPort)."""
-        repositories: list[str] = []
-        if self.registry.get_tool("geo_dataset_search"):
-            repositories.append("GEO")
-        if self.registry.get_tool("expression_atlas"):
-            repositories.append("Expression Atlas")
-        if self.registry.get_tool("immport"):
-            repositories.append("ImmPort")
-        return repositories
+        """Return enabled dataset repositories from the central registry (merge priority order)."""
+        from domain.dataset_repository_registry import resolve_enabled_dataset_repositories
+
+        return resolve_enabled_dataset_repositories(self.registry)
 
     def _run_dataset_discovery(
         self,
@@ -288,6 +283,7 @@ class AgentOrchestrator:
                 retrieved_count=len(ranked),
                 retrievable_total=search_result.get("retrievable_total"),
                 include_text_broad=search_options.include_text_broad,
+                text_broad_total_found=search_result.get("text_broad_total_found"),
                 load_more_cursor=(
                     DatasetSearchCursor.model_validate(search_result["load_more_cursor"])
                     if search_result.get("load_more_cursor")

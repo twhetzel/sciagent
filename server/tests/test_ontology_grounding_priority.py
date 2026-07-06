@@ -139,3 +139,36 @@ def test_phenotype_prefers_hpo_over_mondo():
     assert selected is not None
     assert selected.curie == "HP:0001250"
     assert any(item["curie"] == "MONDO:0000077" for item in selected.rejected_candidates)
+
+
+def test_disease_prefers_doid_exact_over_efo_synonym_for_peanut_allergy():
+    doid_candidate = ConceptMapping(
+        slot="disease",
+        query_term="peanut allergy",
+        curie="DOID:4378",
+        label="peanut allergy",
+        ontology="DOID",
+        match_type="exact",
+        source="ols",
+        confidence=0.92,
+    )
+    efo_candidate = ConceptMapping(
+        slot="disease",
+        query_term="peanut allergy",
+        curie="EFO:0007425",
+        label="peanut allergic reaction",
+        ontology="EFO",
+        match_type="synonym",
+        source="ols",
+        confidence=0.86,
+    )
+
+    selected = select_concept_with_debug(
+        [efo_candidate, doid_candidate],
+        slot="disease",
+    )
+
+    assert selected is not None
+    assert selected.curie == "DOID:4378"
+    assert selected.ontology == "DOID"
+    assert any(item["curie"] == "EFO:0007425" for item in selected.rejected_candidates)
