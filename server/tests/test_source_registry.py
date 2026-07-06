@@ -24,6 +24,7 @@ def test_source_registry_contains_niaid_entries():
         VIVLI_SOURCE_ID,
     }
     assert SOURCE_REGISTRY[IMMPORT_SOURCE_ID].implemented is True
+    assert SOURCE_REGISTRY[VIVLI_SOURCE_ID].implemented is True
     assert SOURCE_REGISTRY[OMICSDI_SOURCE_ID].implemented is False
 
 
@@ -35,12 +36,18 @@ def test_build_api_config_marks_planned_sources_unavailable_by_default():
     assert by_id[IMMPORT_SOURCE_ID]["implemented"] is True
     assert by_id[IMMPORT_SOURCE_ID]["enabled"] is is_source_enabled(IMMPORT_SOURCE_ID)
 
-    for source_id in (OMICSDI_SOURCE_ID, VDJSERVER_SOURCE_ID, VIVLI_SOURCE_ID):
+    for source_id in (OMICSDI_SOURCE_ID, VDJSERVER_SOURCE_ID):
         item = by_id[source_id]
         assert item["implemented"] is False
         assert item["enabled"] is False
         assert item["enabled_by_default"] is False
         assert item["note"] == PLANNED_CONNECTOR_NOTE
+
+    vivli = by_id[VIVLI_SOURCE_ID]
+    assert vivli["implemented"] is True
+    assert vivli["enabled"] is is_source_enabled(VIVLI_SOURCE_ID)
+    assert vivli["enabled_by_default"] is True
+    assert "note" not in vivli
 
 
 def test_build_api_config_includes_registry_metadata():

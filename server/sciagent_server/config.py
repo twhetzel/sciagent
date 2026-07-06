@@ -35,13 +35,13 @@ SOURCE_NAMES = frozenset({
     "clinvar",
     "alphafold",
     "geo_dataset_search",
+    "vivli",
 })
 
 # NIAID-aligned sources with registry metadata but no connector yet.
 PLANNED_SOURCE_NAMES = frozenset({
     "omicsdi",
     "vdjserver",
-    "vivli",
 })
 
 # Agent capabilities that are not external data sources.

@@ -351,6 +351,7 @@ Run: `pytest tests/test_<your_repo>_*.py tests/test_facet_phrase_resolution.py -
 | GEO | `tools/geo_dataset_search.py` | Yes | Yes | `test_geo_search_strategies.py`, `test_geo_max_results.py` | NCBI `retstart` per strategy |
 | Expression Atlas | `tools/expression_atlas.py` | Yes | No (single-shot) | `test_gxa_dataset_discovery.py` | EBI Search + GXA JSON enrich |
 | ImmPort | `tools/immport_dataset_search.py` | Yes | Yes | `test_immport_*.py`, `test_asthma_immport_query.py` | `text_broad` / `adhoc`; structured evidence fields |
+| Vivli | `tools/vivli_dataset_search.py` | Yes | Yes | `test_vivli_*.py`, `test_asthma_vivli_query.py` | NIAID Discovery API; Vivli + AccessClinicalData@NIAID catalogs; NCT accessions |
 | PubMed | `tools/pubmed.py` | — | — | — | Simple literature source |
 
 ---

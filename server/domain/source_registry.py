@@ -61,7 +61,10 @@ SOURCE_REGISTRY: dict[str, SourceRegistryEntry] = {
         source_type="clinical_trial_data_repository",
         domain="clinical_trials",
         access_profile="controlled_or_request_based",
-        implemented=False,
+        implemented=True,
+        tool_name=VIVLI_SOURCE_ID,
+        repository_label="Vivli",
+        source_label="Vivli / AccessClinicalData@NIAID",
     ),
 }
 

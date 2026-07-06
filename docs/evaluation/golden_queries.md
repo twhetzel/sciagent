@@ -204,3 +204,7 @@ Per-source hit counts are captured by searching each enabled repository individu
 ## Adding queries
 
 Append new strings to `GOLDEN_QUERIES` in `server/evaluation/golden_queries.py` and document the intent in this file. Prefer queries that exercise facet interpretation, abbreviation resolution, grounding, and multi-source ranking—not one-off accession lookups.
+
+## Related
+
+ImmPort immunology golden queries (asthma PBMC flow cytometry, influenza vaccine, peanut allergy, tuberculosis T cell) are documented separately in [immport_golden_queries.md](immport_golden_queries.md).

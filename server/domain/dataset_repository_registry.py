@@ -12,6 +12,7 @@ from domain.dataset_search import DatasetSearchCursor, InterpretedQuery
 GEO_REPOSITORY = "GEO"
 GXA_REPOSITORY = "Expression Atlas"
 IMMPORT_REPOSITORY = "ImmPort"
+VIVLI_REPOSITORY = "Vivli"
 
 FetchRecordsFn = Callable[..., dict[str, Any]]
 FetchMoreFn = Callable[[DatasetSearchCursor], dict[str, Any]]
@@ -56,6 +57,12 @@ def _build_registry() -> dict[str, DatasetRepositorySpec]:
         get_immport_max_results,
         normalize_immport_records,
     )
+    from tools.vivli_dataset_search import (
+        fetch_more_vivli_repository_records,
+        fetch_vivli_repository_records,
+        get_vivli_max_results,
+        normalize_vivli_records,
+    )
 
     return {
         GEO_REPOSITORY: DatasetRepositorySpec(
@@ -90,6 +97,17 @@ def _build_registry() -> dict[str, DatasetRepositorySpec]:
             fetch_more_records=fetch_more_immport_repository_records,
             normalize_records=normalize_immport_records,
             resolve_max_results=get_immport_max_results,
+        ),
+        VIVLI_REPOSITORY: DatasetRepositorySpec(
+            repository=VIVLI_REPOSITORY,
+            tool_name="vivli",
+            source_display="Vivli / AccessClinicalData@NIAID",
+            priority=3,
+            accession_prefixes=("NCT",),
+            fetch_records=fetch_vivli_repository_records,
+            fetch_more_records=fetch_more_vivli_repository_records,
+            normalize_records=normalize_vivli_records,
+            resolve_max_results=get_vivli_max_results,
         ),
     }
 

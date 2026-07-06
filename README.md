@@ -64,6 +64,7 @@ Queries like `BRCA1 gene`, `marfan syndrome variants`, or `Find RNA-seq datasets
 | `europepmc` | Europe PMC REST API | None |
 | `expression_atlas` | EMBL-EBI Expression Atlas (EBI Search + GXA JSON API) | None; dataset-discovery pipeline when GEO is excluded or for routed dataset queries |
 | `immport` | ImmPort Shared Data API (study metadata search) | None; integrated dataset-discovery pipeline with GEO and Expression Atlas |
+| `vivli` | NIAID Data Ecosystem Discovery API (Vivli + AccessClinicalData@NIAID) | None; controlled-access clinical trial metadata in dataset-discovery pipeline |
 | `mygene` | MyGene.info v3 | None |
 | `uniprot` | UniProt REST | None |
 | `clinvar` | NCBI E-utilities (ClinVar) | Same NCBI env vars as PubMed |
@@ -88,6 +89,7 @@ SciAgent Studio routes queries based on keywords and simple entity extraction (g
 | `marfan syndrome variants` | PubMed, OpenAlex, Europe PMC, ClinVar | Literature + ClinVar condition search (disease term extracted as `marfan`) |
 | `breast cancer literature` | PubMed, OpenAlex, Europe PMC | Normalized article hits from three literature sources |
 | `ulcerative colitis gene expression` | Expression Atlas | Ranked Expression Atlas experiments with accession, species, and type |
+| `Find clinical trial datasets for asthma` | Vivli dataset discovery (when enabled) | Ranked NCT-identified trials from Vivli / AccessClinicalData@NIAID with controlled-access badges |
 | `Find public RNA-seq datasets for ulcerative colitis colon tissue` | GEO + Expression Atlas dataset discovery (merged, de-duped when both enabled) | Ranked dataset panel with facets, evidence snippets, and per-repository strategy trace |
 | `TP53 expression atlas` | MyGene, UniProt, Expression Atlas | Gene/protein metadata plus matching Atlas experiments |
 | `search articles on cystic fibrosis` | PubMed, OpenAlex, Europe PMC | Literature results (disease keyword triggers literature tools) |
@@ -392,7 +394,7 @@ See [`.env.example`](.env.example). Key variables:
 |----------|---------|
 | `SCIAGENT_HOST` / `SCIAGENT_PORT` | API bind address |
 | `SCIAGENT_CORS_ORIGINS` | Allowed browser origins (comma-separated) |
-| `SCIAGENT_EXCLUDED_SOURCES` | Optional blocklist of external data sources to skip (`pubmed`, `openalex`, `europepmc`, `expression_atlas`, `immport`, `mygene`, `uniprot`, `clinvar`, `alphafold`, `geo_dataset_search`). Excluding `geo_dataset_search` routes dataset-style queries to Expression Atlas and ImmPort when enabled; with all enabled, GEO, GXA, and ImmPort results are merged and ranked together. Planned NIAID sources (`omicsdi`, `vdjserver`, `vivli`) appear in `GET /api/config` but are not enabled until connectors ship. |
+| `SCIAGENT_EXCLUDED_SOURCES` | Optional blocklist of external data sources to skip (`pubmed`, `openalex`, `europepmc`, `expression_atlas`, `immport`, `vivli`, `mygene`, `uniprot`, `clinvar`, `alphafold`, `geo_dataset_search`). Excluding `geo_dataset_search` routes dataset-style queries to Expression Atlas, ImmPort, and Vivli when enabled; with all enabled, GEO, GXA, ImmPort, and Vivli results are merged and ranked together. Planned NIAID sources (`omicsdi`, `vdjserver`) appear in `GET /api/config` but are not enabled until connectors ship. |
 | `SCIAGENT_EXCLUDED_TOOLS` | Optional blocklist of agent tools to skip (`summarize`) |
 | `NCBI_EMAIL` | **Recommended.** Contact email for NCBI E-utilities (PubMed, ClinVar, GEO); `PUBMED_EMAIL` fallback |
 | `NCBI_API_KEY` | Optional NCBI API key for higher E-utilities rate limits |
