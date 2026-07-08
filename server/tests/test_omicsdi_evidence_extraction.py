@@ -146,3 +146,60 @@ def test_omicsdi_transcriptomics_supports_rna_seq_evidence():
     assert any(mapping.slot == "assay" for mapping in annotated[0].matched_concepts)
     assert annotated[0].observed_assay == "RNA-seq"
     assert not any("requested RNA-seq, not supported" in msg for msg in annotated[0].why_partial)
+
+
+def _ibd_metabolomics_mappings() -> list[ConceptMapping]:
+    return [
+        ConceptMapping(
+            slot="disease",
+            query_term="inflammatory bowel disease",
+            curie="MONDO:0005265",
+            label="inflammatory bowel disease",
+            ontology="MONDO",
+            synonyms=["inflammatory bowel disease", "IBD"],
+            source="curated",
+        ),
+        ConceptMapping(
+            slot="tissue",
+            query_term="serum",
+            curie="UBERON:0001977",
+            label="serum",
+            ontology="UBERON",
+            synonyms=["serum", "blood serum"],
+            source="curated",
+        ),
+        ConceptMapping(
+            slot="assay",
+            query_term="metabolomics",
+            curie="OBI:0003782",
+            label="metabolomics",
+            ontology="OBI",
+            synonyms=["metabolomics"],
+            source="curated",
+        ),
+    ]
+
+
+def test_omicsdi_metabolomics_supports_assay_when_technology_is_mass_spectrometry():
+    mappings = _ibd_metabolomics_mappings()
+    candidate = _omicsdi_candidate(
+        accession="ST000899",
+        title="Alterations in Lipid, Amino Acid, and Energy Metabolism in Serum",
+        description="Metabolomics profiling of serum from IBD patients.",
+        metadata_fields={
+            "title": "Alterations in Lipid, Amino Acid, and Energy Metabolism in Serum",
+            "summary": "Metabolomics profiling of serum from IBD patients.",
+            "condition_or_disease": "inflammatory bowel disease",
+            "biosample_type": "Blood",
+            "assay_method": "Mass Spectrometry, ESI Mass Spectrometry",
+            "omicsdi_omics_type": "Metabolomics",
+            "omicsdi_observed_assay": "metabolomics",
+        },
+    )
+
+    annotated = annotate_dataset_candidates([candidate], mappings)
+    matched_slots = {mapping.slot for mapping in annotated[0].matched_concepts}
+
+    assert "assay" in matched_slots
+    assert "tissue" in matched_slots
+    assert annotated[0].observed_assay == "metabolomics"

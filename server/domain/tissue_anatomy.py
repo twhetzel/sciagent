@@ -40,6 +40,14 @@ ANATOMY_TERMS: tuple[dict[str, Any], ...] = (
         "synonyms": ["blood", "whole blood", "peripheral blood"],
     },
     {
+        "canonical": "serum",
+        "pattern": r"\b(?:blood\s+)?serum\b",
+        "curie": "UBERON:0001977",
+        "label": "serum",
+        "iri": "http://purl.obolibrary.org/obo/UBERON_0001977",
+        "synonyms": ["serum", "blood serum"],
+    },
+    {
         "canonical": "liver",
         "pattern": r"\bliver\b|\bhepatic\b",
         "curie": "UBERON:0002107",
@@ -70,6 +78,14 @@ ANATOMY_TERMS: tuple[dict[str, Any], ...] = (
         "label": "colon",
         "iri": "http://purl.obolibrary.org/obo/UBERON_0001155",
         "synonyms": ["colon", "colonic", "large intestine", "large bowel"],
+    },
+    {
+        "canonical": "breast",
+        "pattern": r"\bbreast\s+tissue\b|\bbreast(?!\s+cancer\b)\b",
+        "curie": "UBERON:0000310",
+        "label": "breast",
+        "iri": "http://purl.obolibrary.org/obo/UBERON_0000310",
+        "synonyms": ["breast", "breast tissue", "mammary gland"],
     },
     {
         "canonical": "ileum",
@@ -152,6 +168,19 @@ ANATOMY_TERMS: tuple[dict[str, Any], ...] = (
         "synonyms": ["tumor", "tumour", "neoplasm", "neoplastic"],
     },
 )
+
+
+_BREAST_CANCER_CONTEXT = re.compile(r"\bbreast\s+cancer\b", re.I)
+_BREAST_TISSUE_CONTEXT = re.compile(r"\bbreast\s+tissue\b", re.I)
+
+
+def is_breast_tissue_query(query: str) -> bool:
+    """Return True when breast should be interpreted as anatomy, not only as part of breast cancer."""
+    if _BREAST_TISSUE_CONTEXT.search(query):
+        return True
+    if _BREAST_CANCER_CONTEXT.search(query):
+        return False
+    return bool(re.search(r"\bbreast\b", query, re.I))
 
 
 def build_tissue_patterns() -> list[tuple[re.Pattern[str], str]]:

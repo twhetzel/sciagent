@@ -44,4 +44,4 @@ def test_derived_tables_are_consistent():
     assert SLOT_PRIMARY_ONTOLOGIES["disease"] == ["MONDO", "DOID", "EFO"]
     assert SLOT_PRIMARY_ONTOLOGIES["tissue"] == ["UBERON", "CL"]
     assert "CL:" in SLOT_CURIE_PREFIXES["tissue"]
-    assert build_slot_ontology_preference()["assay"] == ["OBI", "GO"]
+    assert build_slot_ontology_preference()["assay"] == ["OBI", "GO", "NCIT"]

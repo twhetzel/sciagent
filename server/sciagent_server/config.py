@@ -36,11 +36,12 @@ SOURCE_NAMES = frozenset({
     "alphafold",
     "geo_dataset_search",
     "vivli",
+    "omicsdi",
+    "proteomexchange",
 })
 
 # NIAID-aligned sources with registry metadata but no connector yet.
 PLANNED_SOURCE_NAMES = frozenset({
-    "omicsdi",
     "vdjserver",
 })
 
@@ -71,7 +72,7 @@ EXCLUDED_TOOLS = parse_excluded_tools()
 
 
 def default_include_text_broad() -> bool:
-    """Default for ImmPort text_broad strategy (SCIAGENT_IMMPORT_TEXT_BROAD, default true)."""
+    """Default for text_broad supplemental strategy (SCIAGENT_IMMPORT_TEXT_BROAD, default true)."""
     raw = os.environ.get("SCIAGENT_IMMPORT_TEXT_BROAD", "true").strip().lower()
     return raw not in {"false", "0", "no", "off"}
 

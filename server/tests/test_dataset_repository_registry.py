@@ -4,12 +4,17 @@ from domain.dataset_repository_registry import (
     GEO_REPOSITORY,
     GXA_REPOSITORY,
     IMMPORT_REPOSITORY,
+    OMICSDI_REPOSITORY,
+    PROTEOMEXCHANGE_REPOSITORY,
+    VDJSERVER_REPOSITORY,
+    filter_repositories_for_interpreted_query,
     get_repository_spec,
     pick_load_more_cursor,
     repository_supports_load_more,
     resolve_enabled_dataset_repositories,
     supported_repositories,
 )
+from domain.dataset_search import InterpretedQuery
 
 
 def test_supported_repositories_include_geo_gxa_immport():
@@ -70,3 +75,74 @@ def test_resolve_enabled_dataset_repositories_respects_registry_and_priority():
         FakeRegistry({"expression_atlas", "immport"})
     )
     assert without_geo == [GXA_REPOSITORY, IMMPORT_REPOSITORY]
+
+
+def test_filter_repositories_skips_proteomexchange_for_metabolomics():
+    interpreted = InterpretedQuery(
+        disease="inflammatory bowel disease",
+        tissue="serum",
+        assay="metabolomics",
+        organism=None,
+    )
+    repos = [PROTEOMEXCHANGE_REPOSITORY, OMICSDI_REPOSITORY, GEO_REPOSITORY]
+    filtered, skipped = filter_repositories_for_interpreted_query(
+        repos,
+        interpreted,
+        query="Find public metabolomics datasets for inflammatory bowel disease serum.",
+    )
+    assert filtered == [OMICSDI_REPOSITORY, GEO_REPOSITORY]
+    assert skipped == [PROTEOMEXCHANGE_REPOSITORY]
+
+
+def test_filter_repositories_keeps_proteomexchange_for_proteomics():
+    interpreted = InterpretedQuery(
+        disease="asthma",
+        tissue="lung",
+        assay="proteomics",
+        organism=None,
+    )
+    repos = [PROTEOMEXCHANGE_REPOSITORY, OMICSDI_REPOSITORY]
+    filtered, skipped = filter_repositories_for_interpreted_query(repos, interpreted)
+    assert filtered == repos
+    assert skipped == []
+
+
+def test_filter_repositories_skips_vdjserver_for_unrelated_assay_queries():
+    interpreted = InterpretedQuery(
+        disease="asthma",
+        tissue="lung",
+        assay="proteomics",
+        organism=None,
+    )
+    repos = [VDJSERVER_REPOSITORY, OMICSDI_REPOSITORY, GEO_REPOSITORY]
+    filtered, skipped = filter_repositories_for_interpreted_query(
+        repos,
+        interpreted,
+        query="Find public proteomics datasets for asthma lung tissue.",
+    )
+    assert filtered == [OMICSDI_REPOSITORY, GEO_REPOSITORY]
+    assert skipped == [VDJSERVER_REPOSITORY]
+
+
+def test_filter_repositories_keeps_vdjserver_for_repertoire_queries():
+    interpreted = InterpretedQuery(
+        disease="COVID-19",
+        tissue="blood",
+        assay=None,
+        organism=None,
+    )
+    repos = [VDJSERVER_REPOSITORY, IMMPORT_REPOSITORY]
+    filtered, skipped = filter_repositories_for_interpreted_query(
+        repos,
+        interpreted,
+        query="Find public BCR repertoire datasets for COVID-19 blood.",
+    )
+    assert filtered == repos
+    assert skipped == []
+
+
+def test_vdjserver_repository_spec_supports_load_more():
+    spec = get_repository_spec(VDJSERVER_REPOSITORY)
+    assert spec.tool_name == "vdjserver"
+    assert spec.fetch_more_records is not None
+    assert repository_supports_load_more(VDJSERVER_REPOSITORY) is True

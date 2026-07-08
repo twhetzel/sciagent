@@ -1,4 +1,4 @@
-"""OmicsDI multi-omics dataset search via the OmicsDI REST API."""
+"""VDJServer immune repertoire dataset search via the AIRR Data Commons API."""
 
 from __future__ import annotations
 
@@ -10,89 +10,61 @@ from typing import Any
 import requests
 
 from domain.dataset_search import ConceptMapping, DatasetCandidate, DatasetSearchCursor, InterpretedQuery
+from domain.airr_assay import annotate_airr_metadata_fields
 from domain.evidence_extraction import collect_metadata_fields
-from domain.omicsdi_assay import annotate_omicsdi_metadata_fields, infer_observed_assay_from_omicsdi_metadata
 from domain.facet_abbreviation_resolution import QUERY_STOPWORDS
 from domain.facet_search_strategies import STRATEGY_PRIORITY
 from domain.text_broad_search import (
     TEXT_BROAD_STRATEGY,
     finalize_facet_total_found,
     resolve_search_queries_with_text_broad,
-    resolve_text_broad_total_found,
     roll_up_facet_totals,
     strategy_count_summary,
 )
-from domain.repository_vocab.omicsdi_vocab import (
-    omicsdi_assay_filter_clauses,
-    resolve_omicsdi_facet_value,
+from domain.repository_vocab.vdjserver_vocab import (
+    resolve_vdjserver_facet_value,
+    vdjserver_assay_filter,
 )
 
 logger = logging.getLogger(__name__)
 
-OMICSDI_SEARCH_BASE = "https://www.omicsdi.org/ws/dataset/search"
-OMICSDI_DATASET_BASE = "https://www.omicsdi.org/ws/dataset"
-OMICSDI_PLATFORM_BASE = "https://www.omicsdi.org/dataset"
-OMICSDI_REPOSITORY = "OmicsDI"
-OMICSDI_SOURCE = "OmicsDI API"
+VDJSERVER_REPERTOIRE_URL = "https://vdjserver.org/airr/v1/repertoire"
+VDJSERVER_REPOSITORY = "VDJServer"
+VDJSERVER_SOURCE = "VDJServer AIRR API"
 DEFAULT_MAX_RESULTS = 10
 MAX_RESULTS_CAP = 50
 REQUEST_TIMEOUT = 20
 MAX_PAGE_SIZE = 100
 
-OMICSDI_ADHOC_STOPWORDS = QUERY_STOPWORDS | frozenset(
+VDJSERVER_ADHOC_STOPWORDS = QUERY_STOPWORDS | frozenset(
     {
         "dataset",
         "datasets",
         "public",
-        "omics",
-        "omicsdi",
+        "immune",
+        "repertoire",
+        "repertoires",
+        "vdjserver",
+        "airr",
         "find",
-        "multi",
+        "sequencing",
     }
 )
 
 WORD_PATTERN = re.compile(r"[A-Za-z0-9]+(?:'[A-Za-z]+)?")
 
-QUERY_OMICS_TYPE_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
-    (re.compile(r"\brna[\s-]?seq(?:uencing)?\b", re.I), "Transcriptomics"),
-    (re.compile(r"\btranscriptome\b", re.I), "Transcriptomics"),
-    (re.compile(r"\bproteomics\b", re.I), "Proteomics"),
-    (re.compile(r"\bmetabolomics\b", re.I), "Metabolomics"),
-    (re.compile(r"\bgenomics\b", re.I), "Genomics"),
-)
 
-
-def _infer_assay_from_query(query: str) -> str | None:
-    for pattern, omics_type in QUERY_OMICS_TYPE_PATTERNS:
-        if pattern.search(query):
-            return omics_type
-    return None
-
-
-def get_omicsdi_max_results(override: int | None = None) -> int:
+def get_vdjserver_max_results(override: int | None = None) -> int:
     """Resolve result limit from explicit arg, env var, or default."""
     if override is not None:
         return max(1, min(int(override), MAX_RESULTS_CAP))
 
-    raw = os.getenv("OMICSDI_MAX_RESULTS", str(DEFAULT_MAX_RESULTS))
+    raw = os.getenv("VDJSERVER_MAX_RESULTS", str(DEFAULT_MAX_RESULTS))
     try:
         value = int(raw)
     except (TypeError, ValueError):
         value = DEFAULT_MAX_RESULTS
     return max(1, min(value, MAX_RESULTS_CAP))
-
-
-def _escape_query_term(term: str) -> str:
-    return term.replace("\\", "\\\\").replace('"', '\\"')
-
-
-def _join_list(values: Any) -> str:
-    if not values:
-        return ""
-    if isinstance(values, list):
-        parts = [str(item).strip() for item in values if str(item).strip()]
-        return ", ".join(parts)
-    return str(values).strip()
 
 
 def _compact_adhoc_search_term(query: str) -> str:
@@ -101,7 +73,7 @@ def _compact_adhoc_search_term(query: str) -> str:
     for match in WORD_PATTERN.finditer(query):
         token = match.group()
         normalized = token.lower()
-        if normalized in OMICSDI_ADHOC_STOPWORDS or normalized in seen:
+        if normalized in VDJSERVER_ADHOC_STOPWORDS or normalized in seen:
             continue
         seen.add(normalized)
         tokens.append(token)
@@ -112,18 +84,14 @@ def _facet_values(
     *,
     concept_mappings: list[ConceptMapping] | None,
     interpreted: InterpretedQuery | dict[str, Any] | None,
-    query: str = "",
 ) -> dict[str, str | None]:
     if interpreted is not None and isinstance(interpreted, dict):
         interpreted = InterpretedQuery.model_validate(interpreted)
     by_slot = {mapping.slot: mapping.label for mapping in (concept_mappings or [])}
-    assay = by_slot.get("assay") or (interpreted.assay if interpreted else None)
-    if not assay and query.strip():
-        assay = _infer_assay_from_query(query)
     return {
         "disease": by_slot.get("disease") or (interpreted.disease if interpreted else None),
         "tissue": by_slot.get("tissue") or (interpreted.tissue if interpreted else None),
-        "assay": assay,
+        "assay": by_slot.get("assay") or (interpreted.assay if interpreted else None),
         "organism": by_slot.get("organism") or (interpreted.organism if interpreted else None),
     }
 
@@ -131,46 +99,53 @@ def _facet_values(
 def _normalize_facet_value(slot: str, value: str | None) -> str | None:
     if not value:
         return None
-    return resolve_omicsdi_facet_value(slot, value) or value.strip()
+    return resolve_vdjserver_facet_value(slot, value) or value.strip()
 
 
-def _organism_clause(organism: str | None) -> str | None:
-    if not organism:
+def _contains_filter(field: str, value: str) -> dict[str, Any]:
+    return {"op": "contains", "content": {"field": field, "value": value}}
+
+
+def _equals_filter(field: str, value: str) -> dict[str, Any]:
+    return {"op": "=", "content": {"field": field, "value": value}}
+
+
+def _combine_filters(clauses: list[dict[str, Any]]) -> dict[str, Any] | None:
+    clauses = [clause for clause in clauses if clause]
+    if not clauses:
         return None
-    taxon = resolve_omicsdi_facet_value("organism", organism)
-    if taxon and taxon.isdigit():
-        return f'TAXONOMY:"{taxon}"'
-    return None
+    if len(clauses) == 1:
+        return clauses[0]
+    return {"op": "and", "content": clauses}
 
 
-def _build_omicsdi_api_query(
+def build_vdjserver_adc_filters(
     *,
     strategy: str,
     search_term: str,
     concept_mappings: list[ConceptMapping] | None,
     interpreted: InterpretedQuery | dict[str, Any] | None,
-    query: str = "",
-) -> str:
-    """Build one OmicsDI search query for a facet strategy."""
-    facets = _facet_values(
-        concept_mappings=concept_mappings,
-        interpreted=interpreted,
-        query=query,
-    )
-    organism_clause = _organism_clause(facets.get("organism"))
+) -> dict[str, Any] | None:
+    """Build one AIRR ADC filter object for a facet strategy."""
+    facets = _facet_values(concept_mappings=concept_mappings, interpreted=interpreted)
+    clauses: list[dict[str, Any]] = []
+
+    organism = _normalize_facet_value("organism", facets.get("organism"))
+    if organism:
+        clauses.append(_equals_filter("subject.species.id", organism))
 
     if strategy == "adhoc":
         compact = _compact_adhoc_search_term(search_term)
-        clauses = [compact or search_term.strip()]
-        if organism_clause:
-            clauses.append(organism_clause)
-        return " AND ".join(clause for clause in clauses if clause)
+        text = compact or search_term.strip()
+        if text:
+            clauses.append(_contains_filter("study.study_title", text))
+        return _combine_filters(clauses)
 
     if strategy == TEXT_BROAD_STRATEGY:
-        clauses = [search_term.strip()]
-        if organism_clause:
-            clauses.append(organism_clause)
-        return " AND ".join(clause for clause in clauses if clause)
+        text = search_term.strip()
+        if text:
+            clauses.append(_contains_filter("study.study_title", text))
+        return _combine_filters(clauses)
 
     slot_map = {
         "strict": ("disease", "assay", "tissue"),
@@ -179,149 +154,201 @@ def _build_omicsdi_api_query(
         "broad_3": ("disease",),
     }.get(strategy, ())
 
-    clauses: list[str] = []
     for slot in slot_map:
         value = _normalize_facet_value(slot, facets.get(slot))
         if not value:
             continue
-        escaped = _escape_query_term(value)
         if slot == "disease":
-            clauses.append(f'disease:"{escaped}"')
+            clauses.append(_contains_filter("subject.diagnosis.disease_diagnosis.label", value))
         elif slot == "tissue":
-            clauses.append(f'tissue:"{escaped}"')
+            clauses.append(_contains_filter("sample.tissue.label", value))
         elif slot == "assay":
-            clauses.extend(omicsdi_assay_filter_clauses(value))
+            assay_clause = vdjserver_assay_filter(value)
+            if assay_clause:
+                clauses.append(assay_clause)
 
-    if organism_clause:
-        clauses.append(organism_clause)
+    if not any(slot in slot_map for slot in ("disease", "tissue", "assay")) and search_term.strip():
+        clauses.append(_contains_filter("study.study_title", search_term.strip()))
 
-    if not clauses and search_term.strip():
-        clauses.append(search_term.strip())
-
-    return " AND ".join(clauses)
+    return _combine_filters(clauses)
 
 
-def _omicsdi_search(
-    query: str,
-    *,
-    size: int,
-    start: int = 0,
-) -> tuple[list[dict[str, Any]], int]:
-    response = requests.get(
-        OMICSDI_SEARCH_BASE,
-        params={"query": query, "size": max(0, min(size, MAX_PAGE_SIZE)), "start": max(0, start)},
+def _vdjserver_post(payload: dict[str, Any]) -> dict[str, Any]:
+    response = requests.post(
+        VDJSERVER_REPERTOIRE_URL,
+        json=payload,
         timeout=REQUEST_TIMEOUT,
     )
     response.raise_for_status()
-    data = response.json()
-    datasets = data.get("datasets") or []
-    total = int(data.get("count") or 0)
-    return datasets, total
+    return response.json()
 
 
-def _dataset_platform_url(source: str, dataset_id: str) -> str:
-    source_slug = (source or "").strip().lower()
-    return f"{OMICSDI_PLATFORM_BASE}/{source_slug}/{dataset_id}"
+def _count_vdjserver_strategy(filters: dict[str, Any] | None) -> tuple[int, int]:
+    """Return (unique_study_count, repertoire_row_count) for pagination and UI totals."""
+    payload: dict[str, Any] = {"size": 0, "facets": ["study.study_id"]}
+    if filters:
+        payload["filters"] = filters
+    data = _vdjserver_post(payload)
+    facets = data.get("Facet") or []
+    study_count = len(facets)
+    repertoire_count = sum(int(item.get("count") or 0) for item in facets)
+    return study_count, repertoire_count
 
 
-def _join_organisms(organisms: Any) -> str:
-    if not isinstance(organisms, list):
+def _fetch_vdjserver_repertoires(
+    filters: dict[str, Any] | None,
+    *,
+    size: int,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    payload: dict[str, Any] = {
+        "size": max(0, min(size, MAX_PAGE_SIZE)),
+        "from": max(0, offset),
+    }
+    if filters:
+        payload["filters"] = filters
+    data = _vdjserver_post(payload)
+    repertoires = data.get("Repertoire") or []
+    if isinstance(repertoires, dict):
+        return [repertoires]
+    return list(repertoires)
+
+
+def _join_labels(items: Any) -> str:
+    if not items:
         return ""
-    names: list[str] = []
-    for item in organisms:
-        if isinstance(item, dict):
-            name = str(item.get("name") or "").strip()
-            if name:
-                names.append(name)
-        elif item:
-            names.append(str(item).strip())
-    return ", ".join(names)
+    if isinstance(items, list):
+        labels: list[str] = []
+        for item in items:
+            if isinstance(item, dict):
+                label = str(item.get("label") or "").strip()
+                if label:
+                    labels.append(label)
+            elif item:
+                labels.append(str(item).strip())
+        return ", ".join(dict.fromkeys(labels))
+    if isinstance(items, dict):
+        return str(items.get("label") or "").strip()
+    return str(items).strip()
 
 
-def _join_keywords(keywords: Any) -> str:
-    if not keywords:
+def _study_accession(study: dict[str, Any]) -> str:
+    study_id = str(study.get("study_id") or "").strip()
+    if study_id:
+        if ":" in study_id:
+            return study_id.split(":", maxsplit=1)[-1].strip()
+        return study_id
+    return str(study.get("vdjserver_uuid") or "").strip()
+
+
+def _study_url(accession: str) -> str:
+    if not accession:
+        return "https://vdjserver.org/"
+    upper = accession.upper()
+    if upper.startswith("PRJ"):
+        return f"https://www.ncbi.nlm.nih.gov/bioproject/{accession}"
+    return "https://vdjserver.org/"
+
+
+def _extract_disease_labels(subject: dict[str, Any]) -> str:
+    diagnoses = subject.get("diagnosis") or []
+    labels: list[str] = []
+    for entry in diagnoses:
+        if not isinstance(entry, dict):
+            continue
+        diagnosis = entry.get("disease_diagnosis") or {}
+        label = str(diagnosis.get("label") or "").strip()
+        if label:
+            labels.append(label)
+    return ", ".join(dict.fromkeys(labels))
+
+
+def _extract_tissue_labels(samples: Any) -> str:
+    if not samples:
         return ""
+    if not isinstance(samples, list):
+        samples = [samples]
+    labels: list[str] = []
+    for sample in samples:
+        if not isinstance(sample, dict):
+            continue
+        tissue = _join_labels(sample.get("tissue"))
+        sample_type = str(sample.get("sample_type") or "").strip()
+        if tissue:
+            labels.append(tissue)
+        elif sample_type:
+            labels.append(sample_type)
+    return ", ".join(dict.fromkeys(labels))
+
+
+def _extract_assay_labels(samples: Any, study: dict[str, Any]) -> str:
+    labels: list[str] = []
+    if not isinstance(samples, list):
+        samples = [samples] if samples else []
+    for sample in samples:
+        if not isinstance(sample, dict):
+            continue
+        pcr_targets = sample.get("pcr_target") or []
+        if not isinstance(pcr_targets, list):
+            pcr_targets = [pcr_targets]
+        for target in pcr_targets:
+            if not isinstance(target, dict):
+                continue
+            locus = str(target.get("pcr_target_locus") or "").strip()
+            if locus:
+                labels.append(locus)
+        platform = str(sample.get("sequencing_platform") or "").strip()
+        if platform:
+            labels.append(platform)
+    keywords = study.get("keywords_study") or []
     if isinstance(keywords, list):
-        return ", ".join(str(item).strip() for item in keywords if str(item).strip())
-    return str(keywords).strip()
+        labels.extend(str(item).strip() for item in keywords if str(item).strip())
+    if labels:
+        return ", ".join(dict.fromkeys(labels))
+    return "AIRR-seq"
 
 
-def _fetch_dataset_detail(source: str, dataset_id: str) -> dict[str, Any] | None:
-    source_slug = (source or "").strip().lower()
-    if not source_slug or not dataset_id:
-        return None
-    try:
-        response = requests.get(
-            f"{OMICSDI_DATASET_BASE}/{source_slug}/{dataset_id}",
-            timeout=REQUEST_TIMEOUT,
-        )
-        response.raise_for_status()
-        payload = response.json()
-        if isinstance(payload, dict):
-            return payload
-    except requests.RequestException as exc:
-        logger.warning("OmicsDI detail fetch failed for %s/%s: %s", source_slug, dataset_id, exc)
-    return None
+def _extract_species(subject: dict[str, Any]) -> str:
+    species = subject.get("species") or {}
+    if isinstance(species, dict):
+        return _join_labels(species) or str(species.get("id") or "").strip()
+    return str(species or "").strip()
 
 
-def _detail_structured_fields(detail: dict[str, Any] | None) -> dict[str, str]:
-    if not detail:
-        return {}
-    additional = detail.get("additional") or {}
-    if not isinstance(additional, dict):
-        return {}
-
-    fields: dict[str, str] = {}
-    disease = _join_list(additional.get("disease"))
-    tissue = _join_list(additional.get("tissue"))
-    technology = _join_list(additional.get("technology_type"))
-    if disease:
-        fields["condition_or_disease"] = disease
-    if tissue:
-        fields["biosample_type"] = tissue
-    if technology:
-        fields["assay_method"] = technology
-    return fields
-
-
-def _parse_omicsdi_record(entry: dict[str, Any], *, enrich: bool = True) -> dict[str, Any] | None:
-    dataset_id = str(entry.get("id") or "").strip()
-    source = str(entry.get("source") or "").strip()
-    if not dataset_id:
+def _parse_vdjserver_repertoire(repertoire: dict[str, Any]) -> dict[str, Any] | None:
+    study = repertoire.get("study") or {}
+    subject = repertoire.get("subject") or {}
+    samples = repertoire.get("sample") or []
+    accession = _study_accession(study)
+    if not accession:
         return None
 
-    title = str(entry.get("title") or dataset_id).strip()
-    description = str(entry.get("description") or "").strip()
-    keywords = _join_keywords(entry.get("keywords"))
-    omics_type = _join_list(entry.get("omicsType"))
-    species = _join_organisms(entry.get("organisms"))
+    title = str(study.get("study_title") or accession).strip()
+    description = str(study.get("study_description") or "").strip()
+    condition_or_disease = _extract_disease_labels(subject)
+    biosample_type = _extract_tissue_labels(samples)
+    assay_method = _extract_assay_labels(samples, study)
+    species = _extract_species(subject)
 
-    structured: dict[str, str] = {}
-    if enrich:
-        structured = _detail_structured_fields(_fetch_dataset_detail(source, dataset_id))
-
-    if not structured.get("assay_method") and omics_type:
-        structured["assay_method"] = omics_type
-
-    summary_parts = [part for part in (description, keywords, omics_type, species) if part]
+    summary_parts = [part for part in (description, condition_or_disease, biosample_type, assay_method) if part]
     summary = ". ".join(summary_parts)
 
+    sample_count = len(samples) if isinstance(samples, list) else 1
+
     return {
-        "accession": dataset_id,
-        "title": title,
+        "accession": accession,
+        "title": title or accession,
         "description": description,
         "summary": summary,
-        "condition_or_disease": structured.get("condition_or_disease", ""),
-        "biosample_type": structured.get("biosample_type", ""),
-        "assay_method": structured.get("assay_method", omics_type),
+        "condition_or_disease": condition_or_disease,
+        "biosample_type": biosample_type,
+        "assay_method": assay_method,
         "species": species,
-        "url": _dataset_platform_url(source, dataset_id),
-        "omics_type": omics_type,
-        "keywords": keywords,
-        "source_database": source,
-        "publication_date": str(entry.get("publicationDate") or "").strip(),
-        "_source_repository": OMICSDI_REPOSITORY,
-        "_omicsdi_source": entry,
+        "url": _study_url(accession),
+        "sample_count": sample_count,
+        "study_id": str(study.get("study_id") or accession).strip(),
+        "pub_ids": str(study.get("pub_ids") or "").strip(),
+        "_vdjserver_source": repertoire,
     }
 
 
@@ -330,9 +357,9 @@ def _species_matches(species: str | None, record_species: str) -> bool:
         return True
     species_lower = species.lower()
     record_lower = (record_species or "").lower()
-    if species_lower in {"human", "homo sapiens", "9606"}:
-        return "homo sapiens" in record_lower or "9606" in record_lower
-    if species_lower in {"mouse", "mus musculus", "10090"}:
+    if species_lower in {"human", "homo sapiens"}:
+        return "homo sapiens" in record_lower or "9606" in record_lower or not record_lower
+    if species_lower in {"mouse", "mus musculus"}:
         return "mus musculus" in record_lower or "10090" in record_lower
     return species_lower in record_lower
 
@@ -380,48 +407,52 @@ def _compute_has_more(
     )
 
 
-def _count_all_omicsdi_strategies(
+def _count_all_vdjserver_strategies(
     search_queries: list[tuple[str, str]],
     *,
     concept_mappings: list[ConceptMapping] | None,
     interpreted: InterpretedQuery | None,
-    query: str = "",
 ) -> tuple[list[dict[str, str | int]], int, int, dict[str, int]]:
     strategy_summaries: list[dict[str, str | int]] = []
     strategy_totals: dict[str, int] = {}
+    strategy_study_totals: dict[str, int] = {}
     max_facet_total_found = 0
     primary_total_found = 0
 
     for _, (strategy, search_term) in enumerate(search_queries):
         try:
-            api_query = _build_omicsdi_api_query(
+            filters = build_vdjserver_adc_filters(
                 strategy=strategy,
                 search_term=search_term,
                 concept_mappings=concept_mappings,
                 interpreted=interpreted,
-                query=query,
             )
-            _, total_found = _omicsdi_search(api_query, size=0)
-            strategy_totals[strategy] = total_found
+            study_count, repertoire_count = _count_vdjserver_strategy(filters)
+            strategy_study_totals[strategy] = study_count
+            strategy_totals[strategy] = repertoire_count
             max_facet_total_found, primary_total_found = roll_up_facet_totals(
                 strategy,
-                total_found,
+                study_count,
                 max_facet_total_found=max_facet_total_found,
                 primary_total_found=primary_total_found,
             )
             strategy_summaries.append(
-                strategy_count_summary(strategy, search_term, total_found)
+                strategy_count_summary(strategy, search_term, study_count)
             )
         except requests.exceptions.RequestException as exc:
-            logger.warning("OmicsDI count search failed for strategy %s: %s", strategy, exc)
+            logger.warning("VDJServer count search failed for strategy %s: %s", strategy, exc)
+            strategy_study_totals[strategy] = 0
             strategy_totals[strategy] = 0
             strategy_summaries.append(strategy_count_summary(strategy, search_term, 0))
 
-    max_total_found = finalize_facet_total_found(max_facet_total_found, strategy_totals)
+    max_total_found = finalize_facet_total_found(
+        max_facet_total_found,
+        strategy_study_totals,
+    )
     return strategy_summaries, max_total_found, primary_total_found, strategy_totals
 
 
-def _merge_omicsdi_record(
+def _merge_vdjserver_record(
     accession_to_record: dict[str, dict[str, Any]],
     accession_priority: dict[str, int],
     parsed: dict[str, Any],
@@ -447,7 +478,7 @@ def _merge_omicsdi_record(
     return True
 
 
-def _collect_omicsdi_record_batch(
+def _collect_vdjserver_record_batch(
     search_queries: list[tuple[str, str]],
     *,
     batch_size: int,
@@ -458,8 +489,6 @@ def _collect_omicsdi_record_batch(
     concept_mappings: list[ConceptMapping] | None,
     interpreted: InterpretedQuery | None,
     species: str | None = None,
-    enrich: bool = True,
-    query: str = "",
 ) -> tuple[list[dict[str, Any]], dict[str, int], list[dict[str, str | int]]]:
     accession_to_record: dict[str, dict[str, Any]] = {}
     accession_priority: dict[str, int] = {}
@@ -471,24 +500,20 @@ def _collect_omicsdi_record_batch(
         new_ids = 0
         offset = updated_offsets.get(strategy, 0)
         total_for_strategy = strategy_totals.get(strategy, 0)
-        api_query = _build_omicsdi_api_query(
+        filters = build_vdjserver_adc_filters(
             strategy=strategy,
             search_term=search_term,
             concept_mappings=concept_mappings,
             interpreted=interpreted,
-            query=query,
         )
 
         while len(accession_to_record) < batch_size and offset < total_for_strategy:
             remaining_batch = batch_size - len(accession_to_record)
-            remaining_strategy = total_for_strategy - offset
-            page_size = min(per_strategy_page, remaining_batch, remaining_strategy, MAX_PAGE_SIZE)
+            page_size = min(per_strategy_page, remaining_batch * 3, MAX_PAGE_SIZE)
             if page_size <= 0:
                 break
 
-            entries, hit_count = _omicsdi_search(api_query, size=page_size, start=offset)
-            strategy_totals[strategy] = hit_count
-            total_for_strategy = hit_count
+            entries = _fetch_vdjserver_repertoires(filters, size=page_size, offset=offset)
             retrieved += len(entries)
 
             if not entries:
@@ -496,14 +521,14 @@ def _collect_omicsdi_record_batch(
                 break
 
             for entry in entries:
-                parsed = _parse_omicsdi_record(entry, enrich=enrich)
+                parsed = _parse_vdjserver_repertoire(entry)
                 if not parsed:
                     continue
                 if not _species_matches(species, parsed.get("species", "")):
                     continue
                 if parsed["accession"] in seen_accessions:
                     continue
-                if _merge_omicsdi_record(
+                if _merge_vdjserver_record(
                     accession_to_record,
                     accession_priority,
                     parsed,
@@ -539,7 +564,20 @@ def _collect_omicsdi_record_batch(
     return records, updated_offsets, batch_stats
 
 
-def _build_omicsdi_cursor(
+def _text_broad_total_from_summaries(
+    strategy_summaries: list[dict[str, str | int | bool]],
+    *,
+    include_text_broad: bool,
+) -> int | None:
+    if not include_text_broad:
+        return None
+    for summary in strategy_summaries:
+        if summary.get("strategy") == TEXT_BROAD_STRATEGY:
+            return int(summary.get("total_found") or 0)
+    return None
+
+
+def _build_vdjserver_cursor(
     *,
     concept_mappings: list[ConceptMapping],
     search_queries: list[tuple[str, str]],
@@ -553,6 +591,7 @@ def _build_omicsdi_cursor(
     query: str = "",
     interpreted_query: InterpretedQuery | dict[str, Any] | None = None,
     include_text_broad: bool = True,
+    text_broad_total_found: int | None = None,
 ) -> DatasetSearchCursor:
     interpreted = (
         InterpretedQuery.model_validate(interpreted_query)
@@ -568,13 +607,10 @@ def _build_omicsdi_cursor(
         seen_accessions=sorted(seen_accessions),
         total_found=total_found,
         primary_total_found=primary_total_found,
-        text_broad_total_found=resolve_text_broad_total_found(
-            strategy_totals,
-            include_text_broad=include_text_broad,
-        ),
+        text_broad_total_found=text_broad_total_found,
         max_results=max_results,
         search_term=primary_search_term,
-        repository=OMICSDI_REPOSITORY,
+        repository=VDJSERVER_REPOSITORY,
         include_text_broad=include_text_broad,
         has_more=_compute_has_more(search_queries, strategy_offsets, strategy_totals),
     )
@@ -586,37 +622,34 @@ def _build_source_metadata(record: dict[str, Any]) -> dict[str, str]:
         "biosample_type",
         "assay_method",
         "species",
-        "omics_type",
-        "keywords",
-        "source_database",
-        "publication_date",
+        "study_id",
+        "pub_ids",
     )
     metadata = {
         key: str(record.get(key)).strip()
         for key in keys
         if str(record.get(key) or "").strip()
     }
-    metadata["source"] = OMICSDI_SOURCE
+    metadata["source"] = VDJSERVER_SOURCE
     metadata["access_profile"] = "mixed"
     return metadata
 
 
-def normalize_omicsdi_record(
+def normalize_vdjserver_record(
     record: dict[str, Any],
     *,
     retrieval_strategy: str | None = None,
     retrieval_search_term: str | None = None,
 ) -> DatasetCandidate | None:
-    """Convert one OmicsDI record into a shared DatasetCandidate."""
+    """Convert one VDJServer study record into a shared DatasetCandidate."""
     accession = str(record.get("accession") or "").strip()
     if not accession:
         return None
 
-    title = str(record.get("title") or "Untitled dataset").strip()
+    title = str(record.get("title") or "Untitled study").strip()
     description = str(record.get("description") or "").strip()
     summary = str(record.get("summary") or description).strip()
-    assay_method = str(record.get("assay_method") or "").strip()
-    omics_type = str(record.get("omics_type") or "").strip()
+    assay_method = str(record.get("assay_method") or "AIRR-seq").strip()
     metadata_fields = collect_metadata_fields(
         title=title,
         description=summary,
@@ -627,28 +660,21 @@ def normalize_omicsdi_record(
         metadata_fields["condition_or_disease"] = str(record["condition_or_disease"])
     if record.get("biosample_type"):
         metadata_fields["biosample_type"] = str(record["biosample_type"])
-    metadata_fields = annotate_omicsdi_metadata_fields(
-        metadata_fields,
-        omics_type=omics_type,
-        assay_method=assay_method,
-    )
-    observed_assay = metadata_fields.get("omicsdi_observed_assay") or infer_observed_assay_from_omicsdi_metadata(
-        omics_type=omics_type,
-        assay_method=assay_method,
-    )
-    if observed_assay == "unknown":
-        observed_assay = assay_method or omics_type or None
+    if assay_method:
+        metadata_fields["assay_method"] = assay_method
+    metadata_fields = annotate_airr_metadata_fields(metadata_fields, assay_method=assay_method)
 
     return DatasetCandidate(
-        repository=OMICSDI_REPOSITORY,
+        repository=VDJSERVER_REPOSITORY,
         accession=accession,
         title=title,
         description=description,
-        url=str(record.get("url") or _dataset_platform_url(record.get("source_database", ""), accession)),
+        sample_count=record.get("sample_count"),
+        url=str(record.get("url") or _study_url(accession)),
         metadata_fields=metadata_fields,
         observed_disease=str(record.get("condition_or_disease") or "").strip() or None,
         observed_tissue=str(record.get("biosample_type") or "").strip() or None,
-        observed_assay=observed_assay if observed_assay else None,
+        observed_assay=assay_method or None,
         observed_organism=str(record.get("species") or "").strip() or None,
         source_metadata=_build_source_metadata(record),
         retrieval_strategy=retrieval_strategy or record.get("_retrieval_strategy"),
@@ -656,16 +682,16 @@ def normalize_omicsdi_record(
     )
 
 
-def normalize_omicsdi_records(records: list[dict[str, Any]]) -> list[DatasetCandidate]:
+def normalize_vdjserver_records(records: list[dict[str, Any]]) -> list[DatasetCandidate]:
     candidates: list[DatasetCandidate] = []
     for record in records:
-        candidate = normalize_omicsdi_record(record)
+        candidate = normalize_vdjserver_record(record)
         if candidate:
             candidates.append(candidate)
     return candidates
 
 
-def fetch_omicsdi_repository_records(
+def fetch_vdjserver_repository_records(
     concept_mappings: list[ConceptMapping],
     max_results: int | None = None,
     *,
@@ -673,8 +699,8 @@ def fetch_omicsdi_repository_records(
     interpreted_query: InterpretedQuery | None = None,
     include_text_broad: bool = True,
 ) -> dict[str, Any]:
-    """Search OmicsDI with multi-strategy facet queries."""
-    max_results = get_omicsdi_max_results(max_results)
+    """Search VDJServer repertoire metadata with multi-strategy facet queries."""
+    max_results = get_vdjserver_max_results(max_results)
     interpreted = None
     if interpreted_query is not None:
         interpreted = (
@@ -699,11 +725,11 @@ def fetch_omicsdi_repository_records(
             "include_text_broad": include_text_broad,
             "max_results": max_results,
             "records": [],
-            "source": OMICSDI_SOURCE,
-            "repository": OMICSDI_REPOSITORY,
+            "source": VDJSERVER_SOURCE,
+            "repository": VDJSERVER_REPOSITORY,
             "has_more": False,
             "load_more_cursor": None,
-            "error": "No grounded concepts available for OmicsDI search",
+            "error": "No grounded concepts available for VDJServer search",
         }
 
     per_strategy_page = max(5, max_results)
@@ -712,11 +738,10 @@ def fetch_omicsdi_repository_records(
     errors: list[str] = []
 
     strategy_summaries, max_total_found, primary_total_found, strategy_totals = (
-        _count_all_omicsdi_strategies(
+        _count_all_vdjserver_strategies(
             search_queries,
             concept_mappings=concept_mappings,
             interpreted=interpreted,
-            query=query,
         )
     )
 
@@ -724,7 +749,7 @@ def fetch_omicsdi_repository_records(
     strategy_offsets = {strategy: 0 for strategy, _ in search_queries}
 
     try:
-        records, strategy_offsets, batch_stats = _collect_omicsdi_record_batch(
+        records, strategy_offsets, batch_stats = _collect_vdjserver_record_batch(
             search_queries,
             batch_size=max_results,
             per_strategy_page=per_strategy_page,
@@ -734,10 +759,9 @@ def fetch_omicsdi_repository_records(
             concept_mappings=concept_mappings,
             interpreted=interpreted,
             species=species,
-            query=query,
         )
     except requests.exceptions.RequestException as exc:
-        logger.warning("OmicsDI search batch failed: %s", exc)
+        logger.warning("VDJServer search batch failed: %s", exc)
         errors.append(f"search batch: {exc}")
         records = []
         batch_stats = []
@@ -752,7 +776,12 @@ def fetch_omicsdi_repository_records(
     for record in records:
         seen_accessions.add(record["accession"])
 
-    cursor = _build_omicsdi_cursor(
+    text_broad_total_found = _text_broad_total_from_summaries(
+        strategy_summaries,
+        include_text_broad=include_text_broad,
+    )
+
+    cursor = _build_vdjserver_cursor(
         concept_mappings=concept_mappings,
         search_queries=search_queries,
         strategy_offsets=strategy_offsets,
@@ -765,11 +794,7 @@ def fetch_omicsdi_repository_records(
         query=query,
         interpreted_query=interpreted,
         include_text_broad=include_text_broad,
-    )
-
-    text_broad_total_found = resolve_text_broad_total_found(
-        strategy_totals,
-        include_text_broad=include_text_broad,
+        text_broad_total_found=text_broad_total_found,
     )
 
     payload: dict[str, Any] = {
@@ -781,8 +806,8 @@ def fetch_omicsdi_repository_records(
         "include_text_broad": include_text_broad,
         "max_results": max_results,
         "records": records,
-        "source": OMICSDI_SOURCE,
-        "repository": OMICSDI_REPOSITORY,
+        "source": VDJSERVER_SOURCE,
+        "repository": VDJSERVER_REPOSITORY,
         "has_more": cursor.has_more,
         "load_more_cursor": cursor.model_dump() if cursor.has_more else None,
     }
@@ -791,8 +816,8 @@ def fetch_omicsdi_repository_records(
     return payload
 
 
-def fetch_more_omicsdi_repository_records(cursor: DatasetSearchCursor) -> dict[str, Any]:
-    """Load the next batch of OmicsDI datasets from cursor offsets."""
+def fetch_more_vdjserver_repository_records(cursor: DatasetSearchCursor) -> dict[str, Any]:
+    """Load the next batch of VDJServer studies from cursor offsets."""
     search_queries = _resolve_search_queries(
         query=cursor.query,
         interpreted_query=cursor.interpreted_query,
@@ -805,8 +830,8 @@ def fetch_more_omicsdi_repository_records(cursor: DatasetSearchCursor) -> dict[s
             "added_count": 0,
             "has_more": False,
             "load_more_cursor": None,
-            "source": OMICSDI_SOURCE,
-            "repository": OMICSDI_REPOSITORY,
+            "source": VDJSERVER_SOURCE,
+            "repository": VDJSERVER_REPOSITORY,
             "error": "Cursor has no search strategies",
         }
 
@@ -816,7 +841,7 @@ def fetch_more_omicsdi_repository_records(cursor: DatasetSearchCursor) -> dict[s
     species = _species_from_interpreted(cursor.interpreted_query)
 
     try:
-        records, strategy_offsets, _batch_stats = _collect_omicsdi_record_batch(
+        records, strategy_offsets, _batch_stats = _collect_vdjserver_record_batch(
             search_queries,
             batch_size=cursor.max_results,
             per_strategy_page=max(5, cursor.max_results),
@@ -826,24 +851,23 @@ def fetch_more_omicsdi_repository_records(cursor: DatasetSearchCursor) -> dict[s
             concept_mappings=cursor.concept_mappings,
             interpreted=cursor.interpreted_query,
             species=species,
-            query=cursor.query,
         )
     except requests.exceptions.RequestException as exc:
-        logger.warning("OmicsDI load-more batch failed: %s", exc)
+        logger.warning("VDJServer load-more batch failed: %s", exc)
         return {
             "records": [],
             "added_count": 0,
             "has_more": cursor.has_more,
             "load_more_cursor": cursor.model_dump(),
-            "source": OMICSDI_SOURCE,
-            "repository": OMICSDI_REPOSITORY,
+            "source": VDJSERVER_SOURCE,
+            "repository": VDJSERVER_REPOSITORY,
             "error": str(exc),
         }
 
     for record in records:
         seen_accessions.add(record["accession"])
 
-    updated_cursor = _build_omicsdi_cursor(
+    updated_cursor = _build_vdjserver_cursor(
         concept_mappings=cursor.concept_mappings,
         search_queries=search_queries,
         strategy_offsets=strategy_offsets,
@@ -856,6 +880,7 @@ def fetch_more_omicsdi_repository_records(cursor: DatasetSearchCursor) -> dict[s
         query=cursor.query,
         interpreted_query=cursor.interpreted_query,
         include_text_broad=cursor.include_text_broad,
+        text_broad_total_found=cursor.text_broad_total_found,
     )
 
     return {
@@ -865,33 +890,33 @@ def fetch_more_omicsdi_repository_records(cursor: DatasetSearchCursor) -> dict[s
         "load_more_cursor": updated_cursor.model_dump() if updated_cursor.has_more else None,
         "include_text_broad": cursor.include_text_broad,
         "text_broad_total_found": updated_cursor.text_broad_total_found,
-        "source": OMICSDI_SOURCE,
-        "repository": OMICSDI_REPOSITORY,
+        "source": VDJSERVER_SOURCE,
+        "repository": VDJSERVER_REPOSITORY,
     }
 
 
-def search_omicsdi_datasets(
+def search_vdjserver_datasets(
     query: str,
     *,
     max_results: int | None = None,
     interpreted_query: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Agent-facing OmicsDI search wrapper."""
-    payload = fetch_omicsdi_repository_records(
+    """Agent-facing VDJServer search wrapper."""
+    payload = fetch_vdjserver_repository_records(
         [],
         max_results=max_results,
         query=query,
         interpreted_query=interpreted_query,
     )
-    candidates = normalize_omicsdi_records(payload.get("records") or [])
+    candidates = normalize_vdjserver_records(payload.get("records") or [])
     return {
         "results": [candidate.model_dump() for candidate in candidates],
         "total_found": payload.get("total_found", 0),
         "primary_total_found": payload.get("primary_total_found"),
         "search_term": payload.get("search_term"),
         "search_strategies": payload.get("search_strategies", []),
-        "source": OMICSDI_SOURCE,
-        "repository": OMICSDI_REPOSITORY,
+        "source": VDJSERVER_SOURCE,
+        "repository": VDJSERVER_REPOSITORY,
         "has_more": payload.get("has_more", False),
         "load_more_cursor": payload.get("load_more_cursor"),
         "error": payload.get("error"),

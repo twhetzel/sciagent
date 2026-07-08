@@ -12,6 +12,12 @@ def test_resolve_omicsdi_disease_aliases():
 def test_resolve_omicsdi_assay_aliases():
     assert resolve_omicsdi_facet_value("assay", "RNA-seq") == "Transcriptomics"
     assert resolve_omicsdi_facet_value("assay", "proteomics") == "Proteomics"
+    assert resolve_omicsdi_facet_value("assay", "metabolomics") == "Metabolomics"
+
+
+def test_resolve_omicsdi_tissue_serum():
+    assert resolve_omicsdi_facet_value("tissue", "serum") == "Serum"
+    assert resolve_omicsdi_facet_value("tissue", "blood serum") == "Serum"
 
 
 def test_omicsdi_assay_filter_clauses():

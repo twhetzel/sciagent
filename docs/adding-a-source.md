@@ -1,6 +1,6 @@
 # Adding a new data source
 
-This guide is the recipe for integrating external repositories into SciAgent Studio. Follow it when adding sources like GEO, Expression Atlas, ImmPort, or future omics archives.
+This guide is the recipe for integrating external repositories into SciAgent Studio. Follow it when adding sources like GEO, Expression Atlas, ImmPort, Vivli, OmicsDI, ProteomeXchange, or future omics archives.
 
 ## Integration tiers
 
@@ -81,20 +81,33 @@ Interpretation and grounding happen **before** repository search and are shared 
 
 Run `pytest tests/test_obo_foundry_policy.py tests/test_facet_phrase_resolution.py` after ontology changes.
 
-#### ImmPort-only: supplemental and fallback text search
+#### Supplemental and fallback text search
 
-These behaviors are implemented in `tools/immport_dataset_search.py` today; other repositories should adopt only when their API has an equivalent free-text mode.
+Facet-backed dataset repositories run a shared **`text_broad`** supplemental strategy after the facet ladder (`strict` → `broad_3`). Shared helpers live in `domain/text_broad_search.py`; each adapter maps `text_broad` to repository-specific free-text API parameters.
 
 | Strategy | When it runs | User control |
 |----------|--------------|--------------|
 | **`text_broad`** | After facet strategies, when at least one facet was resolved | UI checkbox **Include text_broad free-text supplement** (`include_text_broad`; default from `SCIAGENT_IMMPORT_TEXT_BROAD`) |
-| **`adhoc`** | When **no** facets were resolved — last-resort compact free-text (`term` only) | Runs regardless of checkbox (today); facet strategies are skipped |
+| **`adhoc`** | When **no** facets were resolved — last-resort compact free-text | Runs regardless of checkbox; facet strategies are skipped |
 
-ImmPort `text_broad` rules:
+**Repositories with `text_broad` today:** ImmPort, OmicsDI, ProteomeXchange, Vivli, VDJServer.
+
+`text_broad` rules (all supported repositories):
 
 - Append after `strict` → `broad_3`; mark `supplemental: true` in strategy summaries.
-- Use `term` only — do **not** combine with facet params in one request (NDE/CDT parity).
+- Use compact free text only — do **not** combine facet params with the supplemental term in one request (NDE/CDT parity).
 - Set `total_found` / `primary_total_found` from facet strategies only; return **`text_broad_total_found`** separately so the UI can show dual counts (e.g. 312 facet · 1,328 text_broad).
+
+Per-repository API mapping:
+
+| Repository | `text_broad` API shape |
+|------------|------------------------|
+| **ImmPort** | `term` only (no facet params) |
+| **OmicsDI** / **ProteomeXchange** | OmicsDI keyword clause (+ organism taxon when resolved; PX keeps repository scope + proteomics assay guard) |
+| **Vivli** | NIAID `q` with catalog scope + compact term |
+| **VDJServer** | AIRR ADC `study.study_title` contains filter |
+
+Wire `include_text_broad` through `fetch_*_repository_records`, load-more cursors, and `dataset_repository_registry.fetch_repository_records`.
 
 ### Repository-aware evidence (required for CV-backed sources)
 
@@ -207,7 +220,7 @@ MY_REPO_SOURCE_ID: SourceRegistryEntry(
 ),
 ```
 
-Set `implemented=False` for planned stubs (see VDJServer entry). Controlled-access flows are documented in [dataset-access-ui.md](dataset-access-ui.md).
+Set `implemented=False` for planned stubs. Controlled-access flows are documented in [dataset-access-ui.md](dataset-access-ui.md).
 
 Also add the tool name to `SOURCE_NAMES` in `server/sciagent_server/config.py` and register the sidebar tool in `server/agent/registry.py`.
 
@@ -241,6 +254,8 @@ Use **`domain/dataset_search.py` → `DatasetSearchCursor`** for cursor fields. 
 |--------|------------------|---------------|
 | GEO | NCBI `retstart` / `retmax` per strategy | `strategy_offsets`, `strategy_totals`, `seen_ids`, `seen_accessions` |
 | ImmPort | `fromRecord` + `pageSize` per strategy | `strategy_offsets` (1-based next row), `strategy_totals`, `seen_accessions` |
+| Vivli | NIAID Discovery API `from` + `size` per strategy | Same ImmPort-style cursor fields |
+| OmicsDI / ProteomeXchange | OmicsDI REST `start` + `size` per strategy | `strategy_offsets`, `strategy_totals`, `seen_accessions` |
 
 If your API cannot paginate (single-shot result set), set `fetch_more_records=None` in the registry, `has_more: false`, and `load_more_cursor: null`.
 
@@ -322,16 +337,17 @@ Use only when the source is **not** an omics dataset repository.
 
 Copy patterns from existing tests rather than starting from scratch.
 
-| Concern | ImmPort examples | GEO / shared examples |
-|---------|------------------|------------------------|
-| Adapter HTTP + strategies | `tests/test_immport_dataset_search.py` | `tests/test_geo_search_strategies.py` |
-| End-to-end query + search params | `tests/test_asthma_immport_query.py` | — |
-| Repository vocab resolver | `tests/test_immport_vocab.py` | — |
-| Structured facet evidence | `tests/test_immport_evidence_extraction.py` | `tests/test_ranking_facet_quality.py` |
-| Load-more cursor | `tests/test_dataset_load_more.py` | `tests/test_dataset_load_more.py` |
-| Interpretation + grounding | `tests/test_facet_phrase_resolution.py` | `tests/test_tissue_anatomy.py` |
-| Ontology policy | `tests/test_obo_foundry_policy.py` | `tests/test_ontology_grounding_priority.py` |
-| Multi-repo merge | — | `tests/test_multi_repository_dataset_discovery.py` |
+| Concern | ImmPort examples | OmicsDI / ProteomeXchange examples | GEO / shared examples |
+|---------|------------------|-------------------------------------|------------------------|
+| Adapter HTTP + strategies | `tests/test_immport_dataset_search.py` | `tests/test_omicsdi_dataset_search.py`, `tests/test_proteomexchange_dataset_search.py`, `tests/test_vdjserver_dataset_search.py` | `tests/test_geo_search_strategies.py` |
+| End-to-end query + search params | `tests/test_asthma_immport_query.py` | `tests/test_breast_cancer_omicsdi_query.py`, `tests/test_ibd_metabolomics_omicsdi_query.py`, `tests/test_proteomexchange_golden_queries.py`, `tests/test_vdjserver_golden_queries.py` | — |
+| Repository vocab resolver | `tests/test_immport_vocab.py` | `tests/test_omicsdi_vocab.py`, `tests/test_proteomexchange_vocab.py`, `tests/test_vdjserver_vocab.py` | — |
+| Structured facet evidence | `tests/test_immport_evidence_extraction.py` | `tests/test_omicsdi_evidence_extraction.py`, `tests/test_proteomexchange_evidence_extraction.py`, `tests/test_vdjserver_evidence_extraction.py` | `tests/test_ranking_facet_quality.py` |
+| Vivli (NDE API) | — | — | `tests/test_vivli_*.py`, `tests/test_asthma_vivli_query.py` |
+| Load-more cursor | `tests/test_dataset_load_more.py` | `tests/test_dataset_load_more.py` | `tests/test_dataset_load_more.py` |
+| Interpretation + grounding | `tests/test_facet_phrase_resolution.py` | `tests/test_tissue_anatomy.py` | `tests/test_tissue_anatomy.py` |
+| Ontology policy | `tests/test_obo_foundry_policy.py` | `tests/test_obo_foundry_policy.py` | `tests/test_ontology_grounding_priority.py` |
+| Multi-repo merge / assay routing | — | `tests/test_dataset_repository_registry.py` (`filter_repositories_for_interpreted_query`) | `tests/test_multi_repository_dataset_discovery.py` |
 
 **Minimum bar for a new CV-backed repository:**
 
@@ -346,14 +362,45 @@ Run: `pytest tests/test_<your_repo>_*.py tests/test_facet_phrase_resolution.py -
 
 ## Reference implementations
 
-| Source | Module | Registry | Load-more | Tests | Notes |
-|--------|--------|----------|-----------|-------|-------|
-| GEO | `tools/geo_dataset_search.py` | Yes | Yes | `test_geo_search_strategies.py`, `test_geo_max_results.py` | NCBI `retstart` per strategy |
-| Expression Atlas | `tools/expression_atlas.py` | Yes | No (single-shot) | `test_gxa_dataset_discovery.py` | EBI Search + GXA JSON enrich |
-| ImmPort | `tools/immport_dataset_search.py` | Yes | Yes | `test_immport_*.py`, `test_asthma_immport_query.py` | `text_broad` / `adhoc`; structured evidence fields |
-| Vivli | `tools/vivli_dataset_search.py` | Yes | Yes | `test_vivli_*.py`, `test_asthma_vivli_query.py` | NIAID Discovery API; Vivli + AccessClinicalData@NIAID catalogs; NCT accessions |
-| OmicsDI | `tools/omicsdi_dataset_search.py` | Yes | Yes | `test_omicsdi_*.py`, `test_breast_cancer_omicsdi_query.py` | OmicsDI REST API; disease/tissue/omics_type facets; detail enrichment |
-| PubMed | `tools/pubmed.py` | — | — | — | Simple literature source |
+### Dataset pipeline sources
+
+| Source | Module | Domain / omics | Load-more | Env var | Golden queries | Notes |
+|--------|--------|----------------|-----------|---------|----------------|-------|
+| **GEO** | `tools/geo_dataset_search.py` | RNA-seq, microarray | Yes | `GEO_MAX_RESULTS` | [golden_queries.md](evaluation/golden_queries.md) | NCBI `retstart` per strategy; GSE accessions |
+| **Expression Atlas** | `tools/expression_atlas.py` | RNA-seq, proteomics | No (single-shot) | `EXPRESSION_ATLAS_MAX_RESULTS` | [golden_queries.md](evaluation/golden_queries.md) | EBI Search + GXA JSON enrich; `E-GEOD-*` dedupes with GEO |
+| **ImmPort** | `tools/immport_dataset_search.py` | Immunology multi-assay | Yes | `IMMPORT_MAX_RESULTS` | [immport_golden_queries.md](evaluation/immport_golden_queries.md) | `text_broad` / `adhoc` supplemental search; structured CV evidence |
+| **Vivli** | `tools/vivli_dataset_search.py` | Clinical trials | Yes | `VIVLI_MAX_RESULTS` | [vivli_golden_queries.md](evaluation/vivli_golden_queries.md) | NIAID Discovery API; Vivli + AccessClinicalData@NIAID; NCT accessions; controlled access; `text_broad` supplemental |
+| **OmicsDI** | `tools/omicsdi_dataset_search.py` | Multi-omics (proteomics, metabolomics, transcriptomics) | Yes | `OMICSDI_MAX_RESULTS` | [omicsdi_golden_queries.md](evaluation/omicsdi_golden_queries.md) | OmicsDI REST; `disease` / `tissue` / `omics_type` facets; `domain/omicsdi_assay.py`; `text_broad` supplemental |
+| **ProteomeXchange** | `tools/proteomexchange_dataset_search.py` | **Proteomics only** | Yes | `PROTEOMEXCHANGE_MAX_RESULTS` | [proteomexchange_golden_queries.md](evaluation/proteomexchange_golden_queries.md) | OmicsDI REST scoped to PX repos (PRIDE, MassIVE, jPOST, …); ProteomeCentral `PXD*` URLs. Auto-skipped for metabolomics/RNA-seq/genomics queries — use OmicsDI. [NDE comparison](evaluation/proteomexchange_golden_queries.md#result-counts-vs-niaid-data-ecosystem). `text_broad` supplemental |
+| **VDJServer** | `tools/vdjserver_dataset_search.py` | **Immune repertoire (AIRR-seq)** | Yes | `VDJSERVER_MAX_RESULTS` | [vdjserver_golden_queries.md](evaluation/vdjserver_golden_queries.md) | AIRR Data Commons API (`POST /airr/v1/repertoire`); study-level dedupe from repertoire rows; BioProject accessions. Auto-skipped unless the query names repertoire/BCR/TCR concepts or compatible assay facets. `text_broad` supplemental |
+
+Merge **priority** in `dataset_repository_registry.py` (lower = wins on dedupe): GEO (0) → Expression Atlas (1) → ImmPort (2) → Vivli (3) → OmicsDI (4) → ProteomeXchange (5) → VDJServer (6).
+
+**Which source for which query:**
+
+| User asks for… | Primary source(s) |
+|----------------|-------------------|
+| RNA-seq / microarray (disease + tissue) | GEO, Expression Atlas |
+| Immunology (flow cytometry, PBMC, vaccines) | ImmPort |
+| Clinical trial participant data | Vivli |
+| Metabolomics or multi-omics discovery | OmicsDI |
+| Proteomics (`PXD*`, PRIDE, MassIVE) | ProteomeXchange |
+| BCR / TCR / immune repertoire (AIRR-seq) | VDJServer |
+
+**Key tests:** `test_geo_*`, `test_gxa_*`, `test_immport_*`, `test_vivli_*`, `test_omicsdi_*`, `test_proteomexchange_*`, `test_vdjserver_*`, `test_ibd_metabolomics_omicsdi_query.py`, `test_breast_cancer_omicsdi_query.py`, `test_dataset_repository_registry.py`.
+
+### Simple (non-dataset) sources
+
+| Source | Module | Notes |
+|--------|--------|-------|
+| PubMed | `tools/pubmed.py` | Literature; chat + trace only |
+| OpenAlex, Europe PMC, MyGene, UniProt, ClinVar, AlphaFold | `tools/*.py` | Entity / literature lookups |
+
+### Planned
+
+| Source | Status | Notes |
+|--------|--------|-------|
+| *(none)* | — | NIAID-aligned dataset sources above are implemented; see roadmap for hierarchy expansion and NDE benchmarking |
 
 ---
 
@@ -361,10 +408,11 @@ Run: `pytest tests/test_<your_repo>_*.py tests/test_facet_phrase_resolution.py -
 
 When a query matches `is_dataset_discovery_query()`:
 
-1. Search **all enabled** dataset repositories (GEO, Expression Atlas, ImmPort when all are on)
-2. Merge results with canonical de-duplication (`GSE12345` ↔ `E-GEOD-12345`; keep GXA-only studies like `E-MTAB-*`)
-3. Prefer GEO metadata when the same study appears in both sources
-4. Rank the merged candidate set once by evidence coverage
+1. Search **all enabled** dataset repositories (GEO, Expression Atlas, ImmPort, Vivli, OmicsDI, ProteomeXchange, VDJServer — subject to `SCIAGENT_EXCLUDED_SOURCES`)
+2. **Assay routing:** ProteomeXchange is omitted when the interpreted assay is metabolomics, RNA-seq, genomics, or flow cytometry (`filter_repositories_for_interpreted_query` in `dataset_repository_registry.py`) so proteomics-only repos do not return unrelated hits. VDJServer is included only when the query names repertoire/BCR/TCR concepts or compatible assay facets.
+3. Merge results with canonical de-duplication (`GSE12345` ↔ `E-GEOD-12345`; keep GXA-only studies like `E-MTAB-*`)
+4. Prefer higher-priority repository metadata when the same study appears in multiple sources (see priority table in [Reference implementations](#reference-implementations))
+5. Rank the merged candidate set once by evidence coverage
 
 If only one repository is enabled, behavior is unchanged (single-source pipeline).
 
@@ -395,7 +443,7 @@ Follow docs/adding-a-source.md completely:
 - Facet terms: obo_foundry_policy + curated/tissue_anatomy + repository_vocab when needed
 - normalize → DatasetCandidate + repository-aware evidence (structured metadata_fields)
 - fetch_more + DatasetSearchCursor when API paginates
-- dataset_search payload (not chat-only); text_broad only if API supports ImmPort-style supplemental search
+- dataset_search payload (not chat-only); wire `text_broad` supplemental search when the API supports free-text (see [Supplemental and fallback text search](#supplemental-and-fallback-text-search))
 - Tests: adapter + vocab + structured evidence + representative query (see Test templates section)
 - README + .env.example + row in Reference implementations table
 - dataset-access-ui.md if controlled access applies
@@ -405,6 +453,6 @@ Follow docs/adding-a-source.md completely:
 
 ## Deployment notes
 
-- `SCIAGENT_EXCLUDED_SOURCES` — block external databases (`geo_dataset_search`, `expression_atlas`, `immport`, …). Load-more for a repository is disabled when its `tool_name` is excluded.
+- `SCIAGENT_EXCLUDED_SOURCES` — block external databases (`geo_dataset_search`, `expression_atlas`, `immport`, `vivli`, `omicsdi`, `proteomexchange`, `vdjserver`, …). Load-more for a repository is disabled when its `tool_name` is excluded.
 - `SCIAGENT_EXCLUDED_TOOLS` — block agent steps (`summarize`)
 - Restart server after `.env` changes

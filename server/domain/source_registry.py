@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 IMMPORT_SOURCE_ID = "immport"
 OMICSDI_SOURCE_ID = "omicsdi"
+PROTEOMEXCHANGE_SOURCE_ID = "proteomexchange"
 VDJSERVER_SOURCE_ID = "vdjserver"
 VIVLI_SOURCE_ID = "vivli"
 
@@ -50,13 +51,27 @@ SOURCE_REGISTRY: dict[str, SourceRegistryEntry] = {
         repository_label="OmicsDI",
         source_label="OmicsDI API",
     ),
+    PROTEOMEXCHANGE_SOURCE_ID: SourceRegistryEntry(
+        id=PROTEOMEXCHANGE_SOURCE_ID,
+        display_name="ProteomeXchange",
+        source_type="dataset_repository",
+        domain="proteomics",
+        access_profile="open",
+        implemented=True,
+        tool_name=PROTEOMEXCHANGE_SOURCE_ID,
+        repository_label="ProteomeXchange",
+        source_label="ProteomeXchange / OmicsDI API",
+    ),
     VDJSERVER_SOURCE_ID: SourceRegistryEntry(
         id=VDJSERVER_SOURCE_ID,
         display_name="VDJServer",
         source_type="specialized_dataset_repository",
         domain="immune_repertoire",
         access_profile="mixed",
-        implemented=False,
+        implemented=True,
+        tool_name=VDJSERVER_SOURCE_ID,
+        repository_label="VDJServer",
+        source_label="VDJServer AIRR API",
     ),
     VIVLI_SOURCE_ID: SourceRegistryEntry(
         id=VIVLI_SOURCE_ID,

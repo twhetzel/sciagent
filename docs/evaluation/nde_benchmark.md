@@ -1,7 +1,7 @@
 # Workplan: NDE benchmarking
 
 **Status:** Planned (after ontology hierarchy MVP)  
-**Last updated:** 2026-07-05
+**Last updated:** 2026-07-06
 
 Plan for comparing SciAgent dataset discovery against the [NIAID Data Ecosystem Discovery API](https://api.data.niaid.nih.gov/) (NDE). NDE is a manually curated, ontology-aligned index — useful as a **gold comparator** for retrieval quality and for paper claims.
 
@@ -16,6 +16,42 @@ NDE exposes curated facets (e.g. **Health Condition**: Asthma, Mild Asthma, Alle
 1. **Retrieval overlap** — do we find the same studies/datasets NDE lists for a query?
 2. **Recall gains from hierarchy** — does `hierarchy_broad` close gaps (e.g. Mild Asthma under Asthma)?
 3. **Value beyond NDE** — multi-repo merge, evidence ranking, agent trace, context export
+
+### Documented count divergence (ProteomeXchange)
+
+An initial spot check for **Alzheimer disease + ProteomeXchange** shows NDE returning **~604** hits vs SciAgent **~251** (`total_found`) / **~174** (`primary_total_found` with brain tissue). This is expected: NDE assigns `healthCondition` from PubMed-linked MONDO terms; SciAgent’s ProteomeXchange connector uses OmicsDI **repository-submitted** `disease:` facets. Only ~43% of sampled NDE hits matched OmicsDI’s Alzheimer’s disease CV in a July 2026 review.
+
+**Worked example:** [PXD017788](https://data.niaid.nih.gov/resources?id=pxd017788) — see [SciAgent strengths (early findings)](#sciagent-strengths-early-findings) below and the [detailed case study](proteomexchange_golden_queries.md#case-study-pxd017788-sciagent-vs-nde) in `proteomexchange_golden_queries.md`.
+
+Full breakdown, example accession mismatches, and label-sensitivity notes: [proteomexchange_golden_queries.md — Result counts vs NIAID Data Ecosystem](proteomexchange_golden_queries.md#result-counts-vs-niaid-data-ecosystem).
+
+### SciAgent strengths (early findings)
+
+Lower SciAgent hit counts vs NDE are not automatically a coverage gap. An Alzheimer + ProteomeXchange spot check (July 2026) showed NDE **~604** vs SciAgent **~251** / **~174** (strict with brain tissue). [PXD017788](https://data.niaid.nih.gov/resources?id=pxd017788) is a worked example of why SciAgent’s approach can be **more precise**, not less capable:
+
+| Dimension | SciAgent | NDE |
+|-----------|----------|-----|
+| **Retrieval model** | Facet-first: OmicsDI `disease:"…"` uses **repository-submitted** CV | `healthCondition` often expanded from **linked PubMed** (`fromPMID: true`) |
+| **PXD017788** | **Excluded** — submitter disease CV is `Disease Free` | **Included** in Alzheimer set via PMID-linked MONDO tag |
+| **Contradictory metadata** | Record not surfaced when structured disease ≠ query | Lists Alzheimer (PMID), histidinemia (PMID), and Disease Free (curated) together, unresolved |
+| **Tissue** | Structured tissue (Erythrocyte, Monocyte, Bone Marrow) evaluated against query; brain facet in strict strategy | Alzheimer filter ignores tissue |
+| **Assay** | `omics_type` + PRIDE `technology_type` (Mass Spectrometry, Gel-based experiment) | Same source strings map to conflicting `measurementTechnique` terms (e.g. gel-based → unrelated OBI class) |
+
+**Takeaways for the benchmark narrative:**
+
+1. **Facet-first retrieval** — SciAgent requires submitter disease CV to match the grounded facet. PXD017788 is annotated Disease Free, so it never enters the 251-hit set. NDE includes it in the 604 via PMID-linked `healthCondition`, not submitter metadata.
+
+2. **Metadata fidelity over contradictory tags** — NDE can attach multiple incompatible health conditions with no resolution. SciAgent avoids surfacing records whose structured disease field does not match the query.
+
+3. **Multi-facet query alignment** — Tissue and assay facets participate in search and evidence. A mouse macrophage study with non-brain tissue should not rank for *Alzheimer brain proteomics* even when literature mentions Alzheimer elsewhere.
+
+4. **Assay clarity** — SciAgent normalizes proteomics from repository omics type and technology fields; NDE ontology mapping can mis-disambiguate the same PRIDE labels.
+
+5. **Precision vs PMID-expanded recall** — The 604 vs 251 gap reflects SciAgent **refusing to treat literature co-occurrence as disease annotation**. PXD017788 is a mouse BMDM erythrophagocytosis study — lower SciAgent counts can mean **better query relevance**, not worse coverage.
+
+Use PXD017788 as a **regression reference** when scoring NDE-only IDs: not every NDE-only hit is a SciAgent gap worth closing. Distinguish **true recall gaps** (same submitter CV, missed by SciAgent) from **PMID-inflated NDE recall** (submitter CV contradicts the filter).
+
+Detail, API field dumps, and assay mis-mapping table: [proteomexchange_golden_queries.md — Case study PXD017788](proteomexchange_golden_queries.md#case-study-pxd017788-sciagent-vs-nde).
 
 ---
 
@@ -81,6 +117,7 @@ Extend as sources and hierarchy expansion mature.
 | **ID overlap@k** | Intersection of SciAgent top-k accessions (NCT, SDY, GSE, …) with NDE top-k IDs |
 | **SciAgent-only** | IDs SciAgent returns that NDE does not (multi-repo or broader strategies) |
 | **NDE-only** | IDs NDE returns that SciAgent misses (hierarchy / curation gaps) |
+| **NDE-only classification** | Split NDE-only IDs into *submitter-CV match* vs *PMID-only tag* (PXD017788 = PMID-only) |
 | **Strict vs hierarchy delta** | Incremental recall when `hierarchy_broad` enabled |
 | **False broadening rate** | Manual spot check: unrelated disease in expanded hits |
 
@@ -148,5 +185,7 @@ Extend as sources and hierarchy expansion mature.
 | [ontology-hierarchy-expansion.md](../roadmap/ontology-hierarchy-expansion.md) | Prerequisite enhancement |
 | [golden_queries.md](golden_queries.md) | Existing regression harness |
 | [immport_golden_queries.md](immport_golden_queries.md) | Immunology query fixtures |
+| [proteomexchange_golden_queries.md](proteomexchange_golden_queries.md) | ProteomeXchange queries; PXD017788 case study detail |
+| [vivli_golden_queries.md](vivli_golden_queries.md) | Vivli clinical trial query fixtures |
 | [dataset-ranking.md](../dataset-ranking.md) | How related hits are scored |
 | [project-status.md](../project-status.md) | Update when benchmark ships |

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import lru_cache
@@ -14,6 +15,57 @@ GXA_REPOSITORY = "Expression Atlas"
 IMMPORT_REPOSITORY = "ImmPort"
 VIVLI_REPOSITORY = "Vivli"
 OMICSDI_REPOSITORY = "OmicsDI"
+PROTEOMEXCHANGE_REPOSITORY = "ProteomeXchange"
+VDJSERVER_REPOSITORY = "VDJServer"
+TEXT_BROAD_REPOSITORIES = frozenset(
+    {
+        IMMPORT_REPOSITORY,
+        OMICSDI_REPOSITORY,
+        PROTEOMEXCHANGE_REPOSITORY,
+        VIVLI_REPOSITORY,
+        VDJSERVER_REPOSITORY,
+    }
+)
+
+PROTEOMEXCHANGE_INCOMPATIBLE_ASSAYS = frozenset(
+    {
+        "metabolomics",
+        "rna-seq",
+        "genomics",
+        "flow cytometry",
+    }
+)
+
+VDJSERVER_INCOMPATIBLE_ASSAYS = frozenset(
+    {
+        "metabolomics",
+        "proteomics",
+        "flow cytometry",
+        "microarray",
+        "genomics",
+    }
+)
+
+VDJSERVER_COMPATIBLE_ASSAYS = frozenset(
+    {
+        "bcr",
+        "tcr",
+        "airr-seq",
+        "immune repertoire",
+        "immune repertoire sequencing",
+        "repertoire sequencing",
+        "b cell receptor",
+        "t cell receptor",
+    }
+)
+
+VDJSERVER_QUERY_PATTERN = re.compile(
+    r"\b("
+    r"immune repertoire|repertoire seq(?:uencing)?|airr[\s-]?seq|"
+    r"bcr|tcr|vdj|antibody repertoire|b cell receptor|t cell receptor"
+    r")\b",
+    re.I,
+)
 
 FetchRecordsFn = Callable[..., dict[str, Any]]
 FetchMoreFn = Callable[[DatasetSearchCursor], dict[str, Any]]
@@ -63,6 +115,18 @@ def _build_registry() -> dict[str, DatasetRepositorySpec]:
         fetch_omicsdi_repository_records,
         get_omicsdi_max_results,
         normalize_omicsdi_records,
+    )
+    from tools.proteomexchange_dataset_search import (
+        fetch_more_proteomexchange_repository_records,
+        fetch_proteomexchange_repository_records,
+        get_proteomexchange_max_results,
+        normalize_proteomexchange_records,
+    )
+    from tools.vdjserver_dataset_search import (
+        fetch_more_vdjserver_repository_records,
+        fetch_vdjserver_repository_records,
+        get_vdjserver_max_results,
+        normalize_vdjserver_records,
     )
     from tools.vivli_dataset_search import (
         fetch_more_vivli_repository_records,
@@ -126,6 +190,28 @@ def _build_registry() -> dict[str, DatasetRepositorySpec]:
             fetch_more_records=fetch_more_omicsdi_repository_records,
             normalize_records=normalize_omicsdi_records,
             resolve_max_results=get_omicsdi_max_results,
+        ),
+        PROTEOMEXCHANGE_REPOSITORY: DatasetRepositorySpec(
+            repository=PROTEOMEXCHANGE_REPOSITORY,
+            tool_name="proteomexchange",
+            source_display="ProteomeXchange / OmicsDI API",
+            priority=5,
+            accession_prefixes=("PXD",),
+            fetch_records=fetch_proteomexchange_repository_records,
+            fetch_more_records=fetch_more_proteomexchange_repository_records,
+            normalize_records=normalize_proteomexchange_records,
+            resolve_max_results=get_proteomexchange_max_results,
+        ),
+        VDJSERVER_REPOSITORY: DatasetRepositorySpec(
+            repository=VDJSERVER_REPOSITORY,
+            tool_name="vdjserver",
+            source_display="VDJServer AIRR API",
+            priority=6,
+            accession_prefixes=("PRJNA", "PRJEB", "PRJDB"),
+            fetch_records=fetch_vdjserver_repository_records,
+            fetch_more_records=fetch_more_vdjserver_repository_records,
+            normalize_records=normalize_vdjserver_records,
+            resolve_max_results=get_vdjserver_max_results,
         ),
     }
 
@@ -205,6 +291,72 @@ def is_repository_tool_enabled(registry: Any, repository: str) -> bool:
     return registry.get_tool(spec.tool_name) is not None
 
 
+def _query_requests_vdjserver(query: str) -> bool:
+    return bool(VDJSERVER_QUERY_PATTERN.search(query))
+
+
+def _vdjserver_repository_applicable(
+    query: str,
+    interpreted: InterpretedQuery | None,
+) -> bool:
+    if _query_requests_vdjserver(query):
+        return True
+
+    requested_assay = (interpreted.assay if interpreted else None) or ""
+    normalized_assay = requested_assay.strip().lower()
+    if normalized_assay in VDJSERVER_COMPATIBLE_ASSAYS:
+        return True
+    if normalized_assay in VDJSERVER_INCOMPATIBLE_ASSAYS:
+        return False
+    return False
+
+
+def filter_repositories_for_interpreted_query(
+    repositories: list[str],
+    interpreted: InterpretedQuery | None,
+    *,
+    query: str = "",
+) -> tuple[list[str], list[str]]:
+    """
+    Drop repositories that cannot satisfy the interpreted assay facet.
+
+    ProteomeXchange is proteomics-only; metabolomics and other omics queries should
+    use OmicsDI (or other indexes) instead of returning unrelated proteomics hits.
+    VDJServer is immune-repertoire-only and is included when the query names repertoire
+    concepts or compatible assay facets.
+    """
+    if not repositories:
+        return [], []
+
+    filtered = list(repositories)
+    skipped: list[str] = []
+
+    if PROTEOMEXCHANGE_REPOSITORY in filtered:
+        requested_assay = (interpreted.assay if interpreted else None) or ""
+        normalized_assay = requested_assay.strip().lower()
+        if not normalized_assay and query.strip():
+            query_lower = query.lower()
+            if re.search(r"\bmetabolomics\b", query_lower):
+                normalized_assay = "metabolomics"
+            elif re.search(r"\brna[\s-]?seq(?:uencing)?\b", query_lower):
+                normalized_assay = "rna-seq"
+            elif re.search(r"\bgenomics\b", query_lower):
+                normalized_assay = "genomics"
+
+        if normalized_assay in PROTEOMEXCHANGE_INCOMPATIBLE_ASSAYS:
+            filtered = [repo for repo in filtered if repo != PROTEOMEXCHANGE_REPOSITORY]
+            skipped.append(PROTEOMEXCHANGE_REPOSITORY)
+
+    if VDJSERVER_REPOSITORY in filtered and not _vdjserver_repository_applicable(
+        query,
+        interpreted,
+    ):
+        filtered = [repo for repo in filtered if repo != VDJSERVER_REPOSITORY]
+        skipped.append(VDJSERVER_REPOSITORY)
+
+    return filtered, skipped
+
+
 def resolve_enabled_dataset_repositories(registry: Any) -> list[str]:
     """Return repository labels whose pipeline tools are registered, in merge priority order."""
     enabled = [
@@ -236,20 +388,27 @@ def fetch_repository_records(
     include_text_broad: bool = True,
 ) -> dict[str, Any]:
     spec = get_repository_spec(repository)
+    interpreted = None
+    if interpreted_query is not None:
+        interpreted = (
+            InterpretedQuery.model_validate(interpreted_query)
+            if isinstance(interpreted_query, dict)
+            else interpreted_query
+        )
     if repository == GXA_REPOSITORY:
         return spec.fetch_records(
             concept_mappings,
             max_results=max_results,
             query=query,
-            interpreted_query=interpreted_query,
+            interpreted_query=interpreted,
             species=species,
         )
-    if repository == IMMPORT_REPOSITORY:
+    if repository in TEXT_BROAD_REPOSITORIES:
         return spec.fetch_records(
             concept_mappings,
             max_results=max_results,
             query=query,
-            interpreted_query=interpreted_query,
+            interpreted_query=interpreted,
             include_text_broad=include_text_broad,
         )
     return spec.fetch_records(
@@ -257,7 +416,7 @@ def fetch_repository_records(
         max_results=max_results,
         query=query,
         interpreted_query=(
-            interpreted_query.model_dump() if interpreted_query is not None else None
+            interpreted.model_dump() if interpreted is not None else None
         ),
     )
 

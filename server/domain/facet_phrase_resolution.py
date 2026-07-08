@@ -24,6 +24,7 @@ from .synonym_classification import (
     ensure_aliases,
     has_acronym_context,
 )
+from .tissue_anatomy import is_breast_tissue_query
 
 WORD_PATTERN = re.compile(r"[A-Za-z0-9]+(?:'[A-Za-z]+)?")
 
@@ -119,12 +120,63 @@ def _sort_phrases_shortest_first(phrases: list[str]) -> list[str]:
     return sorted(phrases, key=lambda item: (len(_phrase_words(item)), item.lower()))
 
 
-def _phrase_relevant_for_slot(phrase: str, slot: str) -> bool:
+def _filled_slot_values(interpreted: InterpretedQuery, updates: dict[str, str]) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for slot in SLOT_FILL_ORDER:
+        value = updates.get(slot) or getattr(interpreted, slot)
+        if value:
+            values[slot] = value
+    return values
+
+
+def _phrase_subsumed_by_filled_facet(
+    phrase: str,
+    slot: str,
+    *,
+    query: str,
+    filled: dict[str, str],
+) -> bool:
+    """Return True when phrase is only part of an already-filled multi-word facet."""
+    if slot == "disease":
+        return False
+
+    normalized_phrase = _normalize_text(phrase)
+    phrase_words = _phrase_words(phrase)
+
+    for value in filled.values():
+        value_words = _phrase_words(value)
+        if len(value_words) <= 1:
+            continue
+        if normalized_phrase not in value_words and not phrase_words.issubset(value_words):
+            continue
+        if slot == "tissue" and normalized_phrase == "breast" and is_breast_tissue_query(query):
+            return False
+        return True
+    return False
+
+
+def _phrase_relevant_for_slot(
+    phrase: str,
+    slot: str,
+    *,
+    query: str,
+    interpreted: InterpretedQuery,
+    updates: dict[str, str],
+) -> bool:
     """Skip composite phrases that likely belong to another facet slot."""
     words = _phrase_words(phrase)
     if slot == "disease" and words & {"tissue", "biopsies", "biopsy", "samples", "seq", "rnaseq"}:
         return False
     if slot == "tissue" and words & {"disease", "syndrome", "disorder"} and len(words) > 2:
+        return False
+    if slot == "tissue" and _normalize_text(phrase) == "breast" and not is_breast_tissue_query(query):
+        return False
+    if _phrase_subsumed_by_filled_facet(
+        phrase,
+        slot,
+        query=query,
+        filled=_filled_slot_values(interpreted, updates),
+    ):
         return False
     return True
 
@@ -171,7 +223,13 @@ def resolve_phrase_facets(query: str, interpreted: InterpretedQuery) -> Interpre
             for phrase in phrase_order:
                 if _phrase_words(phrase) & consumed_words:
                     continue
-                if not _phrase_relevant_for_slot(phrase, slot):
+                if not _phrase_relevant_for_slot(
+                    phrase,
+                    slot,
+                    query=query,
+                    interpreted=interpreted,
+                    updates=updates,
+                ):
                     continue
 
                 can_use_dynamic = allow_dynamic and dynamic_attempts < MAX_DYNAMIC_GROUNDING_ATTEMPTS

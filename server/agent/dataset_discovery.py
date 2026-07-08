@@ -17,6 +17,7 @@ from domain.dataset_repository_registry import (
     any_load_more_enabled,
     fetch_more_repository_records,
     fetch_repository_records,
+    filter_repositories_for_interpreted_query,
     get_repository_spec,
     infer_record_repository,
     is_repository_tool_enabled,
@@ -286,6 +287,16 @@ def run_dataset_discovery(
 
     interpreted, _llm_trace = interpret_query_pipeline(query)
     concept_mappings = ground_query(interpreted)
+    repositories, skipped_repositories = filter_repositories_for_interpreted_query(
+        repositories,
+        interpreted,
+        query=query,
+    )
+    if not repositories:
+        raise ValueError(
+            "No dataset repositories remain for this query after applying assay filters. "
+            "Try enabling OmicsDI for metabolomics queries."
+        )
     if len(repositories) == 1:
         repo = repositories[0]
         search_result = search_repository(
@@ -307,6 +318,9 @@ def run_dataset_discovery(
         )
         candidates = normalize_merged_records(search_result.get("records", []))
         result_repository = search_result.get("repository", " + ".join(repositories))
+
+    if skipped_repositories:
+        search_result = {**search_result, "skipped_repositories": skipped_repositories}
 
     annotated = annotate_evidence(candidates, concept_mappings)
     ranked = rank_results(annotated, concept_mappings)

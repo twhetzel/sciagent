@@ -17,6 +17,17 @@ def infer_observed_assay_from_omicsdi_metadata(
     assay_method: str = "",
 ) -> str:
     """Map OmicsDI omics_type and technology metadata to a normalized observed assay label."""
+    omics_norm = _normalize_text(omics_type.replace("_", " "))
+    if omics_norm:
+        if "metabolomic" in omics_norm:
+            return "metabolomics"
+        if "proteomic" in omics_norm:
+            return "proteomics"
+        if "transcriptomic" in omics_norm:
+            return "RNA-seq"
+        if "genomic" in omics_norm:
+            return "genomics"
+
     combined = _normalize_text(f"{omics_type} {assay_method}".replace("_", " "))
     if not combined:
         return "unknown"
@@ -62,8 +73,9 @@ def build_omicsdi_assay_warning(
         return None
 
     omics_type = fields.get(OMICSDI_OMICS_TYPE_FIELD, "").strip()
+    omicsdi_observed = fields.get(OMICSDI_OBSERVED_ASSAY_FIELD, "").strip()
     assay_method = fields.get("assay_method", "").strip()
-    if not omics_type and not assay_method:
+    if not omics_type and not omicsdi_observed:
         return None
 
     observed = fields.get(OMICSDI_OBSERVED_ASSAY_FIELD) or infer_observed_assay_from_omicsdi_metadata(

@@ -1,13 +1,24 @@
 export const TEXT_BROAD_STRATEGY = 'text_broad'
 
-export function isImmPortTextBroadEnabled(datasetSearch) {
+export function isTextBroadEnabled(datasetSearch) {
   if (!datasetSearch || datasetSearch.include_text_broad === false) return false
-  const repo = datasetSearch.repository || ''
-  return repo === 'ImmPort' || repo.includes('ImmPort')
+  const direct = datasetSearch?.text_broad_total_found
+  if (typeof direct === 'number' && !Number.isNaN(direct)) {
+    return true
+  }
+  const strategies = datasetSearch?.search_strategies || []
+  return strategies.some(
+    (item) => item.strategy === TEXT_BROAD_STRATEGY || item.supplemental,
+  )
+}
+
+/** @deprecated Use isTextBroadEnabled */
+export function isImmPortTextBroadEnabled(datasetSearch) {
+  return isTextBroadEnabled(datasetSearch)
 }
 
 export function getTextBroadTotalFound(datasetSearch) {
-  if (!isImmPortTextBroadEnabled(datasetSearch)) return null
+  if (!isTextBroadEnabled(datasetSearch)) return null
   const direct = datasetSearch?.text_broad_total_found
   if (typeof direct === 'number' && !Number.isNaN(direct)) {
     return direct
@@ -27,7 +38,7 @@ export function countSupplementalCandidates(candidates = []) {
   ).length
 }
 
-/** Facet vs supplemental breakdown for ImmPort + text_broad messaging. */
+/** Facet vs supplemental breakdown for text_broad messaging. */
 export function summarizeRetrievalCounts(datasetSearch) {
   const candidates = datasetSearch?.candidates || []
   const shown = datasetSearch?.retrieved_count ?? candidates.length ?? 0

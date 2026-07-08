@@ -51,6 +51,8 @@ SLOT_ONTOLOGY_BINDINGS: tuple[OntologyBinding, ...] = (
     OntologyBinding("tissue", "cl", "CL", "anatomy and development", "primary", 1),
     OntologyBinding("assay", "obi", "OBI", "investigations", "primary", 0),
     OntologyBinding("assay", "go", "GO", "biological systems", "primary", 1),
+    # NCIT: repertoire sequencing and other technique terms used by NDE / repositories.
+    OntologyBinding("assay", "ncit", "NCIT", None, "primary", 2),
     OntologyBinding("organism", "ncbitaxon", "NCBITAXON", "organisms", "primary", 0),
 )
 

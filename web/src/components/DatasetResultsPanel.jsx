@@ -12,7 +12,7 @@ import {
 import { FacetStatusInfoTooltip, FacetStatusLabelTooltip } from './FacetStatusTooltip.jsx'
 import {
   formatTextBroadTotalsLine,
-  isImmPortTextBroadEnabled,
+  isTextBroadEnabled,
   summarizeRetrievalCounts,
 } from '../utils/datasetSearchCopy.js'
 import {
@@ -76,7 +76,7 @@ function SearchStrategiesTable({ strategies }) {
       <div className="search-strategies-header">
         <strong>Repository search strategies</strong>
         <span className="search-strategies-note">
-          Facet strategies align with ImmPort CDT / NDE facet counts.{' '}
+          Facet strategies use structured repository facets.{' '}
           <code>text_broad</code> is a supplemental free-text pass (not NDE-equivalent).
         </span>
       </div>
@@ -127,7 +127,7 @@ function HitSummaryBanner({ datasetSearch, candidateCount, loadingMore }) {
     !datasetSearch.has_more &&
     retrievableTotal != null &&
     totalFound > retrievableTotal
-  const textBroadEnabled = isImmPortTextBroadEnabled(datasetSearch)
+  const textBroadEnabled = isTextBroadEnabled(datasetSearch)
   const { supplemental, facetRetrieved, facetTotal, textBroadTotal } =
     summarizeRetrievalCounts(datasetSearch)
   const repositoryTotalsLine = textBroadEnabled

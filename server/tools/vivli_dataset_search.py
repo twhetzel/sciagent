@@ -12,7 +12,15 @@ import requests
 from domain.dataset_search import ConceptMapping, DatasetCandidate, DatasetSearchCursor, InterpretedQuery
 from domain.evidence_extraction import collect_metadata_fields
 from domain.facet_abbreviation_resolution import QUERY_STOPWORDS
-from domain.facet_search_strategies import STRATEGY_PRIORITY, build_facet_search_queries
+from domain.facet_search_strategies import STRATEGY_PRIORITY
+from domain.text_broad_search import (
+    TEXT_BROAD_STRATEGY,
+    finalize_facet_total_found,
+    resolve_search_queries_with_text_broad,
+    resolve_text_broad_total_found,
+    roll_up_facet_totals,
+    strategy_count_summary,
+)
 from domain.repository_vocab import resolve_vivli_facet_value
 
 logger = logging.getLogger(__name__)
@@ -135,6 +143,11 @@ def _build_vivli_api_query(
         compact = _compact_adhoc_search_term(search_term)
         if compact:
             clauses.append(compact)
+        return " AND ".join(clauses)
+
+    if strategy == TEXT_BROAD_STRATEGY:
+        if search_term.strip():
+            clauses.append(search_term.strip())
         return " AND ".join(clauses)
 
     slot_map = {
@@ -310,25 +323,15 @@ def _resolve_search_queries(
     query: str,
     interpreted_query: InterpretedQuery | dict[str, Any] | None = None,
     concept_mappings: list[ConceptMapping] | None = None,
+    include_text_broad: bool = True,
 ) -> list[tuple[str, str]]:
-    interpreted = None
-    if interpreted_query is not None:
-        interpreted = (
-            InterpretedQuery.model_validate(interpreted_query)
-            if isinstance(interpreted_query, dict)
-            else interpreted_query
-        )
-
-    facet_queries = build_facet_search_queries(
-        interpreted=interpreted,
+    return resolve_search_queries_with_text_broad(
+        query=query,
+        interpreted_query=interpreted_query,
         concept_mappings=concept_mappings,
+        include_text_broad=include_text_broad,
+        compact_adhoc_search_term=_compact_adhoc_search_term,
     )
-    if facet_queries:
-        return facet_queries
-    if query.strip():
-        compact = _compact_adhoc_search_term(query)
-        return [("adhoc", compact or query.strip())]
-    return []
 
 
 def _strategy_has_remaining(
@@ -358,10 +361,10 @@ def _count_all_vivli_strategies(
 ) -> tuple[list[dict[str, str | int]], int, int, dict[str, int]]:
     strategy_summaries: list[dict[str, str | int]] = []
     strategy_totals: dict[str, int] = {}
-    max_total_found = 0
+    max_facet_total_found = 0
     primary_total_found = 0
 
-    for index, (strategy, search_term) in enumerate(search_queries):
+    for _, (strategy, search_term) in enumerate(search_queries):
         try:
             api_query = _build_vivli_api_query(
                 strategy=strategy,
@@ -371,31 +374,21 @@ def _count_all_vivli_strategies(
             )
             _, total_found = _niaid_query(api_query, size=0)
             strategy_totals[strategy] = total_found
-            max_total_found = max(max_total_found, total_found)
-            if index == 0:
-                primary_total_found = total_found
+            max_facet_total_found, primary_total_found = roll_up_facet_totals(
+                strategy,
+                total_found,
+                max_facet_total_found=max_facet_total_found,
+                primary_total_found=primary_total_found,
+            )
             strategy_summaries.append(
-                {
-                    "strategy": strategy,
-                    "search_term": search_term,
-                    "total_found": total_found,
-                    "retrieved": 0,
-                    "new_ids": 0,
-                }
+                strategy_count_summary(strategy, search_term, total_found)
             )
         except requests.exceptions.RequestException as exc:
             logger.warning("Vivli count search failed for strategy %s: %s", strategy, exc)
             strategy_totals[strategy] = 0
-            strategy_summaries.append(
-                {
-                    "strategy": strategy,
-                    "search_term": search_term,
-                    "total_found": 0,
-                    "retrieved": 0,
-                    "new_ids": 0,
-                }
-            )
+            strategy_summaries.append(strategy_count_summary(strategy, search_term, 0))
 
+    max_total_found = finalize_facet_total_found(max_facet_total_found, strategy_totals)
     return strategy_summaries, max_total_found, primary_total_found, strategy_totals
 
 
@@ -527,6 +520,7 @@ def _build_vivli_cursor(
     primary_search_term: str,
     query: str = "",
     interpreted_query: InterpretedQuery | dict[str, Any] | None = None,
+    include_text_broad: bool = True,
 ) -> DatasetSearchCursor:
     interpreted = (
         InterpretedQuery.model_validate(interpreted_query)
@@ -542,9 +536,14 @@ def _build_vivli_cursor(
         seen_accessions=sorted(seen_accessions),
         total_found=total_found,
         primary_total_found=primary_total_found,
+        text_broad_total_found=resolve_text_broad_total_found(
+            strategy_totals,
+            include_text_broad=include_text_broad,
+        ),
         max_results=max_results,
         search_term=primary_search_term,
         repository=VIVLI_REPOSITORY,
+        include_text_broad=include_text_broad,
         has_more=_compute_has_more(search_queries, strategy_offsets, strategy_totals),
     )
 
@@ -630,6 +629,7 @@ def fetch_vivli_repository_records(
     *,
     query: str = "",
     interpreted_query: InterpretedQuery | None = None,
+    include_text_broad: bool = True,
 ) -> dict[str, Any]:
     """Search Vivli / AccessClinicalData@NIAID metadata with multi-strategy facet queries."""
     max_results = get_vivli_max_results(max_results)
@@ -644,6 +644,7 @@ def fetch_vivli_repository_records(
         query=query,
         interpreted_query=interpreted,
         concept_mappings=concept_mappings,
+        include_text_broad=include_text_broad,
     )
 
     if not search_queries:
@@ -652,6 +653,8 @@ def fetch_vivli_repository_records(
             "search_strategies": [],
             "total_found": 0,
             "primary_total_found": 0,
+            "text_broad_total_found": None,
+            "include_text_broad": include_text_broad,
             "max_results": max_results,
             "records": [],
             "source": VIVLI_SOURCE,
@@ -717,6 +720,12 @@ def fetch_vivli_repository_records(
         primary_search_term=primary_search_term,
         query=query,
         interpreted_query=interpreted,
+        include_text_broad=include_text_broad,
+    )
+
+    text_broad_total_found = resolve_text_broad_total_found(
+        strategy_totals,
+        include_text_broad=include_text_broad,
     )
 
     payload: dict[str, Any] = {
@@ -724,6 +733,8 @@ def fetch_vivli_repository_records(
         "search_strategies": strategy_summaries,
         "total_found": max_total_found,
         "primary_total_found": primary_total_found,
+        "text_broad_total_found": text_broad_total_found,
+        "include_text_broad": include_text_broad,
         "max_results": max_results,
         "records": records,
         "source": VIVLI_SOURCE,
@@ -742,6 +753,7 @@ def fetch_more_vivli_repository_records(cursor: DatasetSearchCursor) -> dict[str
         query=cursor.query,
         interpreted_query=cursor.interpreted_query,
         concept_mappings=cursor.concept_mappings,
+        include_text_broad=cursor.include_text_broad,
     )
     if not search_queries:
         return {
@@ -798,6 +810,7 @@ def fetch_more_vivli_repository_records(cursor: DatasetSearchCursor) -> dict[str
         primary_search_term=cursor.search_term or search_queries[0][1],
         query=cursor.query,
         interpreted_query=cursor.interpreted_query,
+        include_text_broad=cursor.include_text_broad,
     )
 
     return {
@@ -805,6 +818,8 @@ def fetch_more_vivli_repository_records(cursor: DatasetSearchCursor) -> dict[str
         "added_count": len(records),
         "has_more": updated_cursor.has_more,
         "load_more_cursor": updated_cursor.model_dump() if updated_cursor.has_more else None,
+        "include_text_broad": cursor.include_text_broad,
+        "text_broad_total_found": updated_cursor.text_broad_total_found,
         "source": VIVLI_SOURCE,
         "repository": VIVLI_REPOSITORY,
     }

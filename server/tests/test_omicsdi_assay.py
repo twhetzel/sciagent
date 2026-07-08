@@ -24,6 +24,31 @@ def test_proteomics_maps_to_proteomics():
     )
 
 
+def test_metabolomics_omics_type_takes_priority_over_mass_spectrometry_technology():
+    assert (
+        infer_observed_assay_from_omicsdi_metadata(
+            omics_type="Metabolomics",
+            assay_method="Mass Spectrometry, ESI Mass Spectrometry",
+        )
+        == "metabolomics"
+    )
+
+
+def test_metabolomics_maps_to_metabolomics():
+    assert (
+        infer_observed_assay_from_omicsdi_metadata(omics_type="Metabolomics")
+        == "metabolomics"
+    )
+
+
+def test_omicsdi_supports_metabolomics_from_omics_type():
+    assert omicsdi_supports_requested_assay(
+        omics_type="Metabolomics",
+        assay_method="Mass Spectrometry, ESI",
+        requested_label="metabolomics",
+    )
+
+
 def test_omicsdi_supports_rna_seq_from_transcriptomics():
     assert omicsdi_supports_requested_assay(
         omics_type="Transcriptomics",

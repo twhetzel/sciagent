@@ -66,6 +66,8 @@ Queries like `BRCA1 gene`, `marfan syndrome variants`, or `Find RNA-seq datasets
 | `immport` | ImmPort Shared Data API (study metadata search) | None; integrated dataset-discovery pipeline with GEO and Expression Atlas |
 | `vivli` | NIAID Data Ecosystem Discovery API (Vivli + AccessClinicalData@NIAID) | None; controlled-access clinical trial metadata in dataset-discovery pipeline |
 | `omicsdi` | OmicsDI REST API (proteomics, metabolomics, transcriptomics index) | None; multi-omics dataset-discovery pipeline |
+| `proteomexchange` | ProteomeXchange via OmicsDI REST API (PRIDE, MassIVE, jPOST, and other PX member repositories) | None; proteomics dataset-discovery pipeline |
+| `vdjserver` | VDJServer AIRR Data Commons API (immune repertoire / BCR-TCR studies) | None; immune repertoire dataset-discovery pipeline |
 | `mygene` | MyGene.info v3 | None |
 | `uniprot` | UniProt REST | None |
 | `clinvar` | NCBI E-utilities (ClinVar) | Same NCBI env vars as PubMed |
@@ -92,6 +94,8 @@ SciAgent Studio routes queries based on keywords and simple entity extraction (g
 | `ulcerative colitis gene expression` | Expression Atlas | Ranked Expression Atlas experiments with accession, species, and type |
 | `Find clinical trial datasets for asthma` | Vivli dataset discovery (when enabled) | Ranked NCT-identified trials from Vivli / AccessClinicalData@NIAID with controlled-access badges |
 | `Find public RNA-seq datasets for ulcerative colitis colon tissue` | GEO + Expression Atlas dataset discovery (merged, de-duped when both enabled) | Ranked dataset panel with facets, evidence snippets, and per-repository strategy trace |
+| `Find public proteomics datasets for Alzheimer's disease brain tissue` | ProteomeXchange dataset discovery (when enabled) | Ranked PXD datasets from PRIDE/MassIVE/jPOST with proteomics evidence and ProteomeCentral links |
+| `Find public BCR repertoire datasets for COVID-19 blood` | VDJServer dataset discovery (when enabled) | Ranked AIRR-seq studies from VDJServer with disease/tissue/receptor evidence and BioProject links |
 | `TP53 expression atlas` | MyGene, UniProt, Expression Atlas | Gene/protein metadata plus matching Atlas experiments |
 | `search articles on cystic fibrosis` | PubMed, OpenAlex, Europe PMC | Literature results (disease keyword triggers literature tools) |
 | `AlphaFold structure for EGFR` | AlphaFold, UniProt | Structure confidence, PDB URL, protein metadata |
@@ -395,7 +399,7 @@ See [`.env.example`](.env.example). Key variables:
 |----------|---------|
 | `SCIAGENT_HOST` / `SCIAGENT_PORT` | API bind address |
 | `SCIAGENT_CORS_ORIGINS` | Allowed browser origins (comma-separated) |
-| `SCIAGENT_EXCLUDED_SOURCES` | Optional blocklist of external data sources to skip (`pubmed`, `openalex`, `europepmc`, `expression_atlas`, `immport`, `vivli`, `omicsdi`, `mygene`, `uniprot`, `clinvar`, `alphafold`, `geo_dataset_search`). Excluding `geo_dataset_search` routes dataset-style queries to Expression Atlas, ImmPort, Vivli, and OmicsDI when enabled; with all enabled, GEO, GXA, ImmPort, Vivli, and OmicsDI results are merged and ranked together. Planned NIAID sources (`vdjserver`) appear in `GET /api/config` but are not enabled until connectors ship. |
+| `SCIAGENT_EXCLUDED_SOURCES` | Optional blocklist of external data sources to skip (`pubmed`, `openalex`, `europepmc`, `expression_atlas`, `immport`, `vivli`, `omicsdi`, `proteomexchange`, `vdjserver`, `mygene`, `uniprot`, `clinvar`, `alphafold`, `geo_dataset_search`). Excluding `geo_dataset_search` routes dataset-style queries to Expression Atlas, ImmPort, Vivli, OmicsDI, ProteomeXchange, and VDJServer when enabled; with all enabled, GEO, GXA, ImmPort, Vivli, OmicsDI, ProteomeXchange, and VDJServer results are merged and ranked together. |
 | `SCIAGENT_EXCLUDED_TOOLS` | Optional blocklist of agent tools to skip (`summarize`) |
 | `NCBI_EMAIL` | **Recommended.** Contact email for NCBI E-utilities (PubMed, ClinVar, GEO); `PUBMED_EMAIL` fallback |
 | `NCBI_API_KEY` | Optional NCBI API key for higher E-utilities rate limits |

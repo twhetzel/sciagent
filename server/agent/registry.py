@@ -294,6 +294,52 @@ class ToolRegistry:
             pass
 
         try:
+            from tools.proteomexchange_dataset_search import search_proteomexchange_datasets
+            self.register_tool(
+                name="proteomexchange",
+                description=(
+                    "Search ProteomeXchange for public proteomics datasets "
+                    "using grounded ontology concepts"
+                ),
+                function=search_proteomexchange_datasets,
+                parameters={
+                    "query": {"type": "str", "required": True, "description": "Search query"},
+                    "interpreted_query": {
+                        "type": "dict",
+                        "required": False,
+                        "description": (
+                            "Interpreted disease/tissue/assay facets for multi-strategy search"
+                        ),
+                    },
+                },
+            )
+        except ImportError:
+            pass
+
+        try:
+            from tools.vdjserver_dataset_search import search_vdjserver_datasets
+            self.register_tool(
+                name="vdjserver",
+                description=(
+                    "Search VDJServer for public immune repertoire (AIRR-seq) studies "
+                    "using grounded ontology concepts"
+                ),
+                function=search_vdjserver_datasets,
+                parameters={
+                    "query": {"type": "str", "required": True, "description": "Search query"},
+                    "interpreted_query": {
+                        "type": "dict",
+                        "required": False,
+                        "description": (
+                            "Interpreted disease/tissue/assay facets for multi-strategy search"
+                        ),
+                    },
+                },
+            )
+        except ImportError:
+            pass
+
+        try:
             from tools.vivli_dataset_search import search_vivli_datasets
             self.register_tool(
                 name="vivli",

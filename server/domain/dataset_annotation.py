@@ -11,6 +11,7 @@ from .evidence_extraction import (
     extract_evidence_for_mapping,
 )
 from .gxa_assay import build_gxa_assay_warning
+from .airr_assay import build_airr_assay_warning
 from .omicsdi_assay import build_omicsdi_assay_warning
 
 
@@ -68,6 +69,10 @@ def annotate_dataset_candidates(
                     gxa_message = build_gxa_assay_warning(fields, mapping)
                     if gxa_message:
                         why_partial.append(gxa_message)
+                        continue
+                    airr_message = build_airr_assay_warning(fields, mapping)
+                    if airr_message:
+                        why_partial.append(airr_message)
                         continue
                     omicsdi_message = build_omicsdi_assay_warning(fields, mapping)
                     if omicsdi_message:

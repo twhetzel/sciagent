@@ -1,6 +1,6 @@
 import {
   formatTextBroadTotalsLine,
-  isImmPortTextBroadEnabled,
+  isTextBroadEnabled,
   summarizeRetrievalCounts,
 } from '../utils/datasetSearchCopy.js'
 
@@ -32,7 +32,7 @@ export default function DatasetActionBar({
     !datasetSearch.has_more &&
     retrievableTotal != null &&
     total > retrievableTotal
-  const textBroadEnabled = isImmPortTextBroadEnabled(datasetSearch)
+  const textBroadEnabled = isTextBroadEnabled(datasetSearch)
   const { supplemental, facetRetrieved, facetTotal, textBroadTotal } =
     summarizeRetrievalCounts(datasetSearch)
   const repositoryTotalsLine = textBroadEnabled

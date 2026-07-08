@@ -24,6 +24,7 @@ from .omicsdi_assay import (
     OMICSDI_OBSERVED_ASSAY_FIELD,
     omicsdi_supports_requested_assay,
 )
+from .airr_assay import airr_supports_requested_assay, infer_observed_assay_from_airr_metadata
 from .repository_vocab import resolve_immport_facet_value
 
 DERIVED_TISSUE_MODEL_PATTERNS: tuple[str, ...] = (
@@ -60,6 +61,15 @@ ASSAY_DETECTORS: list[tuple[str, list[str]]] = [
             r"\blc[\s-]?ms/?ms\b",
             r"\blc[\s-]?ms\b",
             r"\bmass spectromet",
+        ],
+    ),
+    (
+        "metabolomics",
+        [
+            r"\bmetabolomic",
+            r"\bmetabolomics\b",
+            r"\buntargeted metabolite",
+            r"\btargeted metabolite",
         ],
     ),
     (
@@ -310,8 +320,16 @@ def _assay_evidence_fields(fields: dict[str, str], mapping: ConceptMapping) -> l
         return []
 
     omics_type = fields.get(OMICSDI_OMICS_TYPE_FIELD, "").strip()
+    omicsdi_observed = fields.get(OMICSDI_OBSERVED_ASSAY_FIELD, "").strip()
     assay_method = fields.get(IMMPORT_ASSAY_FIELD, "").strip()
-    if omics_type or assay_method:
+
+    airr_observed = infer_observed_assay_from_airr_metadata(assay_method=assay_method)
+    if airr_observed != "unknown" and not omics_type and not omicsdi_observed:
+        if airr_supports_requested_assay(assay_method=assay_method, requested_label=mapping.label):
+            return [(IMMPORT_ASSAY_FIELD, assay_method)]
+        return []
+
+    if omics_type or omicsdi_observed:
         if omicsdi_supports_requested_assay(
             omics_type=omics_type,
             assay_method=assay_method,
@@ -320,8 +338,7 @@ def _assay_evidence_fields(fields: dict[str, str], mapping: ConceptMapping) -> l
             if omics_type:
                 return [(OMICSDI_OMICS_TYPE_FIELD, omics_type)]
             return [(IMMPORT_ASSAY_FIELD, assay_method)]
-        if omics_type:
-            return []
+        return []
 
     assay_method = fields.get(IMMPORT_ASSAY_FIELD, "").strip()
     if assay_method and _structured_facet_matches_mapping(mapping, assay_method):

@@ -169,6 +169,19 @@ class AgentOrchestrator:
                 },
             )
 
+            from domain.dataset_repository_registry import filter_repositories_for_interpreted_query
+
+            repositories, skipped_repositories = filter_repositories_for_interpreted_query(
+                repositories,
+                interpreted,
+                query=query,
+            )
+            if not repositories:
+                raise ValueError(
+                    "No dataset repositories remain for this query after applying assay filters. "
+                    "Enable OmicsDI for metabolomics queries."
+                )
+
             search_result = (
                 pipeline.search_repositories(
                     repositories,
@@ -197,6 +210,7 @@ class AgentOrchestrator:
                         else f"Run multi-strategy {repositories[0]} search using grounded labels and synonyms"
                     ),
                     "repositories": repositories,
+                    "skipped_repositories": skipped_repositories,
                     "repository": search_result.get("repository", repository_label),
                     "search_term": search_result.get("search_term", ""),
                     "search_strategies": search_result.get("search_strategies", []),

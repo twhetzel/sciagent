@@ -142,7 +142,7 @@ class DatasetSearchOptions(BaseModel):
 
     include_text_broad: bool = Field(
         default=True,
-        description="Run ImmPort text_broad supplemental free-text strategy after facet strategies",
+        description="Run text_broad supplemental free-text strategy after facet strategies",
     )
 
 
@@ -278,11 +278,11 @@ class DatasetSearchCursor(BaseModel):
     )
     include_text_broad: bool = Field(
         default=True,
-        description="Whether text_broad supplemental ImmPort strategy is active for this cursor",
+        description="Whether text_broad supplemental strategy is active for this cursor",
     )
     text_broad_total_found: int | None = Field(
         default=None,
-        description="ImmPort free-text text_broad strategy hit count when enabled",
+        description="Free-text text_broad strategy hit count when enabled",
     )
     has_more: bool = False
 
@@ -321,11 +321,11 @@ class DatasetSearchResult(BaseModel):
     )
     include_text_broad: bool | None = Field(
         default=None,
-        description="Whether text_broad supplemental ImmPort strategy was used",
+        description="Whether text_broad supplemental strategy was used",
     )
     text_broad_total_found: int | None = Field(
         default=None,
-        description="ImmPort text_broad free-text strategy hit count when enabled",
+        description="text_broad free-text strategy hit count when enabled",
     )
     load_more_cursor: DatasetSearchCursor | None = Field(
         default=None,

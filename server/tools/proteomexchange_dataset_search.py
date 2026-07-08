@@ -1,4 +1,4 @@
-"""OmicsDI multi-omics dataset search via the OmicsDI REST API."""
+"""ProteomeXchange proteomics dataset search via the OmicsDI REST API."""
 
 from __future__ import annotations
 
@@ -11,7 +11,6 @@ import requests
 
 from domain.dataset_search import ConceptMapping, DatasetCandidate, DatasetSearchCursor, InterpretedQuery
 from domain.evidence_extraction import collect_metadata_fields
-from domain.omicsdi_assay import annotate_omicsdi_metadata_fields, infer_observed_assay_from_omicsdi_metadata
 from domain.facet_abbreviation_resolution import QUERY_STOPWORDS
 from domain.facet_search_strategies import STRATEGY_PRIORITY
 from domain.text_broad_search import (
@@ -22,59 +21,58 @@ from domain.text_broad_search import (
     roll_up_facet_totals,
     strategy_count_summary,
 )
-from domain.repository_vocab.omicsdi_vocab import (
-    omicsdi_assay_filter_clauses,
-    resolve_omicsdi_facet_value,
+from domain.omicsdi_assay import annotate_omicsdi_metadata_fields, infer_observed_assay_from_omicsdi_metadata
+from domain.repository_vocab.proteomexchange_vocab import (
+    proteomexchange_assay_filter_clauses,
+    resolve_proteomexchange_facet_value,
 )
 
 logger = logging.getLogger(__name__)
 
 OMICSDI_SEARCH_BASE = "https://www.omicsdi.org/ws/dataset/search"
 OMICSDI_DATASET_BASE = "https://www.omicsdi.org/ws/dataset"
-OMICSDI_PLATFORM_BASE = "https://www.omicsdi.org/dataset"
-OMICSDI_REPOSITORY = "OmicsDI"
-OMICSDI_SOURCE = "OmicsDI API"
+PROTEOMEXCHANGE_PORTAL_BASE = "https://proteomecentral.proteomexchange.org/cgi/GetDataset"
+PROTEOMEXCHANGE_REPOSITORY = "ProteomeXchange"
+PROTEOMEXCHANGE_SOURCE = "ProteomeXchange / OmicsDI API"
 DEFAULT_MAX_RESULTS = 10
 MAX_RESULTS_CAP = 50
 REQUEST_TIMEOUT = 20
 MAX_PAGE_SIZE = 100
 
-OMICSDI_ADHOC_STOPWORDS = QUERY_STOPWORDS | frozenset(
+PROTEOMEXCHANGE_MEMBER_REPOSITORIES: frozenset[str] = frozenset(
+    {
+        "pride",
+        "massive",
+        "jpost",
+        "peptideatlas",
+        "panoramapublic",
+        "iprox",
+        "node",
+    }
+)
+
+PROTEOMEXCHANGE_ADHOC_STOPWORDS = QUERY_STOPWORDS | frozenset(
     {
         "dataset",
         "datasets",
         "public",
-        "omics",
-        "omicsdi",
+        "proteomics",
+        "proteomexchange",
         "find",
-        "multi",
     }
 )
 
 WORD_PATTERN = re.compile(r"[A-Za-z0-9]+(?:'[A-Za-z]+)?")
 
-QUERY_OMICS_TYPE_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
-    (re.compile(r"\brna[\s-]?seq(?:uencing)?\b", re.I), "Transcriptomics"),
-    (re.compile(r"\btranscriptome\b", re.I), "Transcriptomics"),
-    (re.compile(r"\bproteomics\b", re.I), "Proteomics"),
-    (re.compile(r"\bmetabolomics\b", re.I), "Metabolomics"),
-    (re.compile(r"\bgenomics\b", re.I), "Genomics"),
-)
+QUERY_PROTEOMICS_PATTERN = re.compile(r"\bproteomics\b", re.I)
 
 
-def _infer_assay_from_query(query: str) -> str | None:
-    for pattern, omics_type in QUERY_OMICS_TYPE_PATTERNS:
-        if pattern.search(query):
-            return omics_type
-    return None
-
-
-def get_omicsdi_max_results(override: int | None = None) -> int:
+def get_proteomexchange_max_results(override: int | None = None) -> int:
     """Resolve result limit from explicit arg, env var, or default."""
     if override is not None:
         return max(1, min(int(override), MAX_RESULTS_CAP))
 
-    raw = os.getenv("OMICSDI_MAX_RESULTS", str(DEFAULT_MAX_RESULTS))
+    raw = os.getenv("PROTEOMEXCHANGE_MAX_RESULTS", str(DEFAULT_MAX_RESULTS))
     try:
         value = int(raw)
     except (TypeError, ValueError):
@@ -101,11 +99,30 @@ def _compact_adhoc_search_term(query: str) -> str:
     for match in WORD_PATTERN.finditer(query):
         token = match.group()
         normalized = token.lower()
-        if normalized in OMICSDI_ADHOC_STOPWORDS or normalized in seen:
+        if normalized in PROTEOMEXCHANGE_ADHOC_STOPWORDS or normalized in seen:
             continue
         seen.add(normalized)
         tokens.append(token)
     return " ".join(tokens[:6])
+
+
+def _infer_assay_from_query(query: str) -> str | None:
+    if QUERY_PROTEOMICS_PATTERN.search(query):
+        return "Proteomics"
+    return None
+
+
+def _repository_scope_clause() -> str:
+    parts = [
+        "repository:pride",
+        "repository:MassIVE",
+        "repository:jPOST",
+        "repository:PeptideAtlas",
+        "repository:PanoramaPublic",
+        "repository:iProX",
+        "repository:NODE",
+    ]
+    return "(" + " OR ".join(parts) + ")"
 
 
 def _facet_values(
@@ -118,8 +135,8 @@ def _facet_values(
         interpreted = InterpretedQuery.model_validate(interpreted)
     by_slot = {mapping.slot: mapping.label for mapping in (concept_mappings or [])}
     assay = by_slot.get("assay") or (interpreted.assay if interpreted else None)
-    if not assay and query.strip():
-        assay = _infer_assay_from_query(query)
+    if not assay:
+        assay = _infer_assay_from_query(query) or "Proteomics"
     return {
         "disease": by_slot.get("disease") or (interpreted.disease if interpreted else None),
         "tissue": by_slot.get("tissue") or (interpreted.tissue if interpreted else None),
@@ -131,27 +148,26 @@ def _facet_values(
 def _normalize_facet_value(slot: str, value: str | None) -> str | None:
     if not value:
         return None
-    return resolve_omicsdi_facet_value(slot, value) or value.strip()
+    return resolve_proteomexchange_facet_value(slot, value) or value.strip()
 
 
 def _organism_clause(organism: str | None) -> str | None:
     if not organism:
         return None
-    taxon = resolve_omicsdi_facet_value("organism", organism)
+    taxon = resolve_proteomexchange_facet_value("organism", organism)
     if taxon and taxon.isdigit():
         return f'TAXONOMY:"{taxon}"'
     return None
 
 
-def _build_omicsdi_api_query(
+def _build_facet_clauses(
     *,
     strategy: str,
     search_term: str,
     concept_mappings: list[ConceptMapping] | None,
     interpreted: InterpretedQuery | dict[str, Any] | None,
     query: str = "",
-) -> str:
-    """Build one OmicsDI search query for a facet strategy."""
+) -> list[str]:
     facets = _facet_values(
         concept_mappings=concept_mappings,
         interpreted=interpreted,
@@ -164,13 +180,15 @@ def _build_omicsdi_api_query(
         clauses = [compact or search_term.strip()]
         if organism_clause:
             clauses.append(organism_clause)
-        return " AND ".join(clause for clause in clauses if clause)
+        clauses.extend(proteomexchange_assay_filter_clauses("Proteomics"))
+        return [clause for clause in clauses if clause]
 
     if strategy == TEXT_BROAD_STRATEGY:
         clauses = [search_term.strip()]
         if organism_clause:
             clauses.append(organism_clause)
-        return " AND ".join(clause for clause in clauses if clause)
+        clauses.extend(proteomexchange_assay_filter_clauses("Proteomics"))
+        return [clause for clause in clauses if clause]
 
     slot_map = {
         "strict": ("disease", "assay", "tissue"),
@@ -190,15 +208,41 @@ def _build_omicsdi_api_query(
         elif slot == "tissue":
             clauses.append(f'tissue:"{escaped}"')
         elif slot == "assay":
-            clauses.extend(omicsdi_assay_filter_clauses(value))
+            clauses.extend(proteomexchange_assay_filter_clauses(value))
 
     if organism_clause:
         clauses.append(organism_clause)
 
+    if not any(clause.startswith("omics_type:") for clause in clauses):
+        clauses.extend(proteomexchange_assay_filter_clauses("Proteomics"))
+
     if not clauses and search_term.strip():
         clauses.append(search_term.strip())
+        clauses.extend(proteomexchange_assay_filter_clauses("Proteomics"))
 
-    return " AND ".join(clauses)
+    return clauses
+
+
+def _build_proteomexchange_api_query(
+    *,
+    strategy: str,
+    search_term: str,
+    concept_mappings: list[ConceptMapping] | None,
+    interpreted: InterpretedQuery | dict[str, Any] | None,
+    query: str = "",
+) -> str:
+    """Build one OmicsDI search query scoped to ProteomeXchange member repositories."""
+    facet_clauses = _build_facet_clauses(
+        strategy=strategy,
+        search_term=search_term,
+        concept_mappings=concept_mappings,
+        interpreted=interpreted,
+        query=query,
+    )
+    scope = _repository_scope_clause()
+    if not facet_clauses:
+        return scope
+    return f"{scope} AND ({' AND '.join(facet_clauses)})"
 
 
 def _omicsdi_search(
@@ -219,9 +263,8 @@ def _omicsdi_search(
     return datasets, total
 
 
-def _dataset_platform_url(source: str, dataset_id: str) -> str:
-    source_slug = (source or "").strip().lower()
-    return f"{OMICSDI_PLATFORM_BASE}/{source_slug}/{dataset_id}"
+def _dataset_portal_url(accession: str) -> str:
+    return f"{PROTEOMEXCHANGE_PORTAL_BASE}?ID={accession}"
 
 
 def _join_organisms(organisms: Any) -> str:
@@ -260,7 +303,12 @@ def _fetch_dataset_detail(source: str, dataset_id: str) -> dict[str, Any] | None
         if isinstance(payload, dict):
             return payload
     except requests.RequestException as exc:
-        logger.warning("OmicsDI detail fetch failed for %s/%s: %s", source_slug, dataset_id, exc)
+        logger.warning(
+            "ProteomeXchange detail fetch failed for %s/%s: %s",
+            source_slug,
+            dataset_id,
+            exc,
+        )
     return None
 
 
@@ -284,10 +332,17 @@ def _detail_structured_fields(detail: dict[str, Any] | None) -> dict[str, str]:
     return fields
 
 
-def _parse_omicsdi_record(entry: dict[str, Any], *, enrich: bool = True) -> dict[str, Any] | None:
+def _is_proteomexchange_member(source: str, accession: str) -> bool:
+    source_slug = (source or "").strip().lower()
+    if source_slug in PROTEOMEXCHANGE_MEMBER_REPOSITORIES:
+        return True
+    return accession.upper().startswith("PXD")
+
+
+def _parse_proteomexchange_record(entry: dict[str, Any], *, enrich: bool = True) -> dict[str, Any] | None:
     dataset_id = str(entry.get("id") or "").strip()
     source = str(entry.get("source") or "").strip()
-    if not dataset_id:
+    if not dataset_id or not _is_proteomexchange_member(source, dataset_id):
         return None
 
     title = str(entry.get("title") or dataset_id).strip()
@@ -300,8 +355,8 @@ def _parse_omicsdi_record(entry: dict[str, Any], *, enrich: bool = True) -> dict
     if enrich:
         structured = _detail_structured_fields(_fetch_dataset_detail(source, dataset_id))
 
-    if not structured.get("assay_method") and omics_type:
-        structured["assay_method"] = omics_type
+    if not structured.get("assay_method"):
+        structured["assay_method"] = omics_type or "Proteomics"
 
     summary_parts = [part for part in (description, keywords, omics_type, species) if part]
     summary = ". ".join(summary_parts)
@@ -313,15 +368,15 @@ def _parse_omicsdi_record(entry: dict[str, Any], *, enrich: bool = True) -> dict
         "summary": summary,
         "condition_or_disease": structured.get("condition_or_disease", ""),
         "biosample_type": structured.get("biosample_type", ""),
-        "assay_method": structured.get("assay_method", omics_type),
+        "assay_method": structured.get("assay_method", omics_type or "Proteomics"),
         "species": species,
-        "url": _dataset_platform_url(source, dataset_id),
-        "omics_type": omics_type,
+        "url": _dataset_portal_url(dataset_id),
+        "omics_type": omics_type or "Proteomics",
         "keywords": keywords,
         "source_database": source,
         "publication_date": str(entry.get("publicationDate") or "").strip(),
-        "_source_repository": OMICSDI_REPOSITORY,
-        "_omicsdi_source": entry,
+        "_source_repository": PROTEOMEXCHANGE_REPOSITORY,
+        "_proteomexchange_source": entry,
     }
 
 
@@ -380,7 +435,7 @@ def _compute_has_more(
     )
 
 
-def _count_all_omicsdi_strategies(
+def _count_all_proteomexchange_strategies(
     search_queries: list[tuple[str, str]],
     *,
     concept_mappings: list[ConceptMapping] | None,
@@ -394,7 +449,7 @@ def _count_all_omicsdi_strategies(
 
     for _, (strategy, search_term) in enumerate(search_queries):
         try:
-            api_query = _build_omicsdi_api_query(
+            api_query = _build_proteomexchange_api_query(
                 strategy=strategy,
                 search_term=search_term,
                 concept_mappings=concept_mappings,
@@ -413,7 +468,7 @@ def _count_all_omicsdi_strategies(
                 strategy_count_summary(strategy, search_term, total_found)
             )
         except requests.exceptions.RequestException as exc:
-            logger.warning("OmicsDI count search failed for strategy %s: %s", strategy, exc)
+            logger.warning("ProteomeXchange count search failed for strategy %s: %s", strategy, exc)
             strategy_totals[strategy] = 0
             strategy_summaries.append(strategy_count_summary(strategy, search_term, 0))
 
@@ -421,7 +476,7 @@ def _count_all_omicsdi_strategies(
     return strategy_summaries, max_total_found, primary_total_found, strategy_totals
 
 
-def _merge_omicsdi_record(
+def _merge_proteomexchange_record(
     accession_to_record: dict[str, dict[str, Any]],
     accession_priority: dict[str, int],
     parsed: dict[str, Any],
@@ -447,7 +502,7 @@ def _merge_omicsdi_record(
     return True
 
 
-def _collect_omicsdi_record_batch(
+def _collect_proteomexchange_record_batch(
     search_queries: list[tuple[str, str]],
     *,
     batch_size: int,
@@ -471,7 +526,7 @@ def _collect_omicsdi_record_batch(
         new_ids = 0
         offset = updated_offsets.get(strategy, 0)
         total_for_strategy = strategy_totals.get(strategy, 0)
-        api_query = _build_omicsdi_api_query(
+        api_query = _build_proteomexchange_api_query(
             strategy=strategy,
             search_term=search_term,
             concept_mappings=concept_mappings,
@@ -496,14 +551,14 @@ def _collect_omicsdi_record_batch(
                 break
 
             for entry in entries:
-                parsed = _parse_omicsdi_record(entry, enrich=enrich)
+                parsed = _parse_proteomexchange_record(entry, enrich=enrich)
                 if not parsed:
                     continue
                 if not _species_matches(species, parsed.get("species", "")):
                     continue
                 if parsed["accession"] in seen_accessions:
                     continue
-                if _merge_omicsdi_record(
+                if _merge_proteomexchange_record(
                     accession_to_record,
                     accession_priority,
                     parsed,
@@ -539,7 +594,7 @@ def _collect_omicsdi_record_batch(
     return records, updated_offsets, batch_stats
 
 
-def _build_omicsdi_cursor(
+def _build_proteomexchange_cursor(
     *,
     concept_mappings: list[ConceptMapping],
     search_queries: list[tuple[str, str]],
@@ -574,7 +629,7 @@ def _build_omicsdi_cursor(
         ),
         max_results=max_results,
         search_term=primary_search_term,
-        repository=OMICSDI_REPOSITORY,
+        repository=PROTEOMEXCHANGE_REPOSITORY,
         include_text_broad=include_text_broad,
         has_more=_compute_has_more(search_queries, strategy_offsets, strategy_totals),
     )
@@ -596,18 +651,18 @@ def _build_source_metadata(record: dict[str, Any]) -> dict[str, str]:
         for key in keys
         if str(record.get(key) or "").strip()
     }
-    metadata["source"] = OMICSDI_SOURCE
-    metadata["access_profile"] = "mixed"
+    metadata["source"] = PROTEOMEXCHANGE_SOURCE
+    metadata["access_profile"] = "open"
     return metadata
 
 
-def normalize_omicsdi_record(
+def normalize_proteomexchange_record(
     record: dict[str, Any],
     *,
     retrieval_strategy: str | None = None,
     retrieval_search_term: str | None = None,
 ) -> DatasetCandidate | None:
-    """Convert one OmicsDI record into a shared DatasetCandidate."""
+    """Convert one ProteomeXchange record into a shared DatasetCandidate."""
     accession = str(record.get("accession") or "").strip()
     if not accession:
         return None
@@ -615,13 +670,13 @@ def normalize_omicsdi_record(
     title = str(record.get("title") or "Untitled dataset").strip()
     description = str(record.get("description") or "").strip()
     summary = str(record.get("summary") or description).strip()
-    assay_method = str(record.get("assay_method") or "").strip()
-    omics_type = str(record.get("omics_type") or "").strip()
+    assay_method = str(record.get("assay_method") or "Proteomics").strip()
+    omics_type = str(record.get("omics_type") or "Proteomics").strip()
     metadata_fields = collect_metadata_fields(
         title=title,
         description=summary,
         taxon=record.get("species"),
-        gdstype=assay_method or None,
+        gdstype=assay_method,
     )
     if record.get("condition_or_disease"):
         metadata_fields["condition_or_disease"] = str(record["condition_or_disease"])
@@ -637,18 +692,18 @@ def normalize_omicsdi_record(
         assay_method=assay_method,
     )
     if observed_assay == "unknown":
-        observed_assay = assay_method or omics_type or None
+        observed_assay = "proteomics"
 
     return DatasetCandidate(
-        repository=OMICSDI_REPOSITORY,
+        repository=PROTEOMEXCHANGE_REPOSITORY,
         accession=accession,
         title=title,
         description=description,
-        url=str(record.get("url") or _dataset_platform_url(record.get("source_database", ""), accession)),
+        url=str(record.get("url") or _dataset_portal_url(accession)),
         metadata_fields=metadata_fields,
         observed_disease=str(record.get("condition_or_disease") or "").strip() or None,
         observed_tissue=str(record.get("biosample_type") or "").strip() or None,
-        observed_assay=observed_assay if observed_assay else None,
+        observed_assay=observed_assay if observed_assay else "proteomics",
         observed_organism=str(record.get("species") or "").strip() or None,
         source_metadata=_build_source_metadata(record),
         retrieval_strategy=retrieval_strategy or record.get("_retrieval_strategy"),
@@ -656,16 +711,16 @@ def normalize_omicsdi_record(
     )
 
 
-def normalize_omicsdi_records(records: list[dict[str, Any]]) -> list[DatasetCandidate]:
+def normalize_proteomexchange_records(records: list[dict[str, Any]]) -> list[DatasetCandidate]:
     candidates: list[DatasetCandidate] = []
     for record in records:
-        candidate = normalize_omicsdi_record(record)
+        candidate = normalize_proteomexchange_record(record)
         if candidate:
             candidates.append(candidate)
     return candidates
 
 
-def fetch_omicsdi_repository_records(
+def fetch_proteomexchange_repository_records(
     concept_mappings: list[ConceptMapping],
     max_results: int | None = None,
     *,
@@ -673,8 +728,8 @@ def fetch_omicsdi_repository_records(
     interpreted_query: InterpretedQuery | None = None,
     include_text_broad: bool = True,
 ) -> dict[str, Any]:
-    """Search OmicsDI with multi-strategy facet queries."""
-    max_results = get_omicsdi_max_results(max_results)
+    """Search ProteomeXchange with multi-strategy facet queries."""
+    max_results = get_proteomexchange_max_results(max_results)
     interpreted = None
     if interpreted_query is not None:
         interpreted = (
@@ -699,11 +754,11 @@ def fetch_omicsdi_repository_records(
             "include_text_broad": include_text_broad,
             "max_results": max_results,
             "records": [],
-            "source": OMICSDI_SOURCE,
-            "repository": OMICSDI_REPOSITORY,
+            "source": PROTEOMEXCHANGE_SOURCE,
+            "repository": PROTEOMEXCHANGE_REPOSITORY,
             "has_more": False,
             "load_more_cursor": None,
-            "error": "No grounded concepts available for OmicsDI search",
+            "error": "No grounded concepts available for ProteomeXchange search",
         }
 
     per_strategy_page = max(5, max_results)
@@ -712,7 +767,7 @@ def fetch_omicsdi_repository_records(
     errors: list[str] = []
 
     strategy_summaries, max_total_found, primary_total_found, strategy_totals = (
-        _count_all_omicsdi_strategies(
+        _count_all_proteomexchange_strategies(
             search_queries,
             concept_mappings=concept_mappings,
             interpreted=interpreted,
@@ -724,7 +779,7 @@ def fetch_omicsdi_repository_records(
     strategy_offsets = {strategy: 0 for strategy, _ in search_queries}
 
     try:
-        records, strategy_offsets, batch_stats = _collect_omicsdi_record_batch(
+        records, strategy_offsets, batch_stats = _collect_proteomexchange_record_batch(
             search_queries,
             batch_size=max_results,
             per_strategy_page=per_strategy_page,
@@ -737,7 +792,7 @@ def fetch_omicsdi_repository_records(
             query=query,
         )
     except requests.exceptions.RequestException as exc:
-        logger.warning("OmicsDI search batch failed: %s", exc)
+        logger.warning("ProteomeXchange search batch failed: %s", exc)
         errors.append(f"search batch: {exc}")
         records = []
         batch_stats = []
@@ -752,7 +807,7 @@ def fetch_omicsdi_repository_records(
     for record in records:
         seen_accessions.add(record["accession"])
 
-    cursor = _build_omicsdi_cursor(
+    cursor = _build_proteomexchange_cursor(
         concept_mappings=concept_mappings,
         search_queries=search_queries,
         strategy_offsets=strategy_offsets,
@@ -781,8 +836,8 @@ def fetch_omicsdi_repository_records(
         "include_text_broad": include_text_broad,
         "max_results": max_results,
         "records": records,
-        "source": OMICSDI_SOURCE,
-        "repository": OMICSDI_REPOSITORY,
+        "source": PROTEOMEXCHANGE_SOURCE,
+        "repository": PROTEOMEXCHANGE_REPOSITORY,
         "has_more": cursor.has_more,
         "load_more_cursor": cursor.model_dump() if cursor.has_more else None,
     }
@@ -791,8 +846,8 @@ def fetch_omicsdi_repository_records(
     return payload
 
 
-def fetch_more_omicsdi_repository_records(cursor: DatasetSearchCursor) -> dict[str, Any]:
-    """Load the next batch of OmicsDI datasets from cursor offsets."""
+def fetch_more_proteomexchange_repository_records(cursor: DatasetSearchCursor) -> dict[str, Any]:
+    """Load the next batch of ProteomeXchange datasets from cursor offsets."""
     search_queries = _resolve_search_queries(
         query=cursor.query,
         interpreted_query=cursor.interpreted_query,
@@ -805,8 +860,8 @@ def fetch_more_omicsdi_repository_records(cursor: DatasetSearchCursor) -> dict[s
             "added_count": 0,
             "has_more": False,
             "load_more_cursor": None,
-            "source": OMICSDI_SOURCE,
-            "repository": OMICSDI_REPOSITORY,
+            "source": PROTEOMEXCHANGE_SOURCE,
+            "repository": PROTEOMEXCHANGE_REPOSITORY,
             "error": "Cursor has no search strategies",
         }
 
@@ -816,7 +871,7 @@ def fetch_more_omicsdi_repository_records(cursor: DatasetSearchCursor) -> dict[s
     species = _species_from_interpreted(cursor.interpreted_query)
 
     try:
-        records, strategy_offsets, _batch_stats = _collect_omicsdi_record_batch(
+        records, strategy_offsets, _batch_stats = _collect_proteomexchange_record_batch(
             search_queries,
             batch_size=cursor.max_results,
             per_strategy_page=max(5, cursor.max_results),
@@ -829,21 +884,21 @@ def fetch_more_omicsdi_repository_records(cursor: DatasetSearchCursor) -> dict[s
             query=cursor.query,
         )
     except requests.exceptions.RequestException as exc:
-        logger.warning("OmicsDI load-more batch failed: %s", exc)
+        logger.warning("ProteomeXchange load-more batch failed: %s", exc)
         return {
             "records": [],
             "added_count": 0,
             "has_more": cursor.has_more,
             "load_more_cursor": cursor.model_dump(),
-            "source": OMICSDI_SOURCE,
-            "repository": OMICSDI_REPOSITORY,
+            "source": PROTEOMEXCHANGE_SOURCE,
+            "repository": PROTEOMEXCHANGE_REPOSITORY,
             "error": str(exc),
         }
 
     for record in records:
         seen_accessions.add(record["accession"])
 
-    updated_cursor = _build_omicsdi_cursor(
+    updated_cursor = _build_proteomexchange_cursor(
         concept_mappings=cursor.concept_mappings,
         search_queries=search_queries,
         strategy_offsets=strategy_offsets,
@@ -865,33 +920,33 @@ def fetch_more_omicsdi_repository_records(cursor: DatasetSearchCursor) -> dict[s
         "load_more_cursor": updated_cursor.model_dump() if updated_cursor.has_more else None,
         "include_text_broad": cursor.include_text_broad,
         "text_broad_total_found": updated_cursor.text_broad_total_found,
-        "source": OMICSDI_SOURCE,
-        "repository": OMICSDI_REPOSITORY,
+        "source": PROTEOMEXCHANGE_SOURCE,
+        "repository": PROTEOMEXCHANGE_REPOSITORY,
     }
 
 
-def search_omicsdi_datasets(
+def search_proteomexchange_datasets(
     query: str,
     *,
     max_results: int | None = None,
     interpreted_query: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Agent-facing OmicsDI search wrapper."""
-    payload = fetch_omicsdi_repository_records(
+    """Agent-facing ProteomeXchange search wrapper."""
+    payload = fetch_proteomexchange_repository_records(
         [],
         max_results=max_results,
         query=query,
         interpreted_query=interpreted_query,
     )
-    candidates = normalize_omicsdi_records(payload.get("records") or [])
+    candidates = normalize_proteomexchange_records(payload.get("records") or [])
     return {
         "results": [candidate.model_dump() for candidate in candidates],
         "total_found": payload.get("total_found", 0),
         "primary_total_found": payload.get("primary_total_found"),
         "search_term": payload.get("search_term"),
         "search_strategies": payload.get("search_strategies", []),
-        "source": OMICSDI_SOURCE,
-        "repository": OMICSDI_REPOSITORY,
+        "source": PROTEOMEXCHANGE_SOURCE,
+        "repository": PROTEOMEXCHANGE_REPOSITORY,
         "has_more": payload.get("has_more", False),
         "load_more_cursor": payload.get("load_more_cursor"),
         "error": payload.get("error"),
