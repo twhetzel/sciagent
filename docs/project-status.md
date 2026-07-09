@@ -32,6 +32,7 @@ Orientation page for reviewers and new contributors. For setup, architecture, an
 | Area | Status |
 |------|--------|
 | File / download **manifest discovery** | Backend access discovery for GEO and Expression Atlas; UI manifest export |
+| **Dictionary-backed entity span detection** | Planned pre-search interpretation enhancement (local ontology dictionary); see workplan |
 | **Ontology hierarchy expansion** | Planned shared retrieval enhancement (`hierarchy_broad` strategy); see workplan |
 | **NDE benchmarking** | Planned comparator vs NIAID Data Ecosystem API; see workplan |
 | **Local / private** data connectors | Not implemented |
@@ -50,6 +51,7 @@ Orientation page for reviewers and new contributors. For setup, architecture, an
 | VDJServer immune repertoire golden queries | [docs/evaluation/vdjserver_golden_queries.md](evaluation/vdjserver_golden_queries.md) |
 | Adding a new repository to the dataset pipeline | [docs/adding-a-source.md](adding-a-source.md) |
 | Dataset access UI (manifest, access details scaffolding) | [docs/dataset-access-ui.md](dataset-access-ui.md) |
+| Dictionary-backed entity span detection (planned) | [docs/roadmap/entity-span-detection.md](roadmap/entity-span-detection.md) |
 | Ontology hierarchy expansion (planned) | [docs/roadmap/ontology-hierarchy-expansion.md](roadmap/ontology-hierarchy-expansion.md) |
 | NDE benchmarking & paper evaluation (planned) | [docs/evaluation/nde_benchmark.md](evaluation/nde_benchmark.md) |
 | ProteomeXchange vs NDE count comparison (documented) | [docs/evaluation/proteomexchange_golden_queries.md](evaluation/proteomexchange_golden_queries.md#result-counts-vs-niaid-data-ecosystem) |
