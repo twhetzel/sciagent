@@ -126,6 +126,7 @@ def _default_vocabulary() -> ImmPortVocabulary:
     return ImmPortVocabulary()
 
 
+@lru_cache(maxsize=1024)
 def resolve_immport_facet_value(slot: str, term: str | None) -> str | None:
     """Resolve one facet term to an ImmPort lookup-table value."""
     return _default_vocabulary().resolve(slot, term)
