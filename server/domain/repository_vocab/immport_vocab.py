@@ -56,7 +56,7 @@ class ImmPortVocabulary:
             response = requests.get(url, params={"format": "json"}, timeout=REQUEST_TIMEOUT)
             response.raise_for_status()
             payload = response.json()
-        except requests.RequestException as exc:
+        except (requests.RequestException, ValueError) as exc:
             logger.warning("ImmPort lookup fetch failed for %s: %s", table_name, exc)
             self._tables[table_name] = []
             return []
