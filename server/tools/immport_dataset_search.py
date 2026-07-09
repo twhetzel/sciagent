@@ -187,7 +187,10 @@ def _immport_study_search(params: dict[str, str | int]) -> tuple[list[dict[str, 
         timeout=REQUEST_TIMEOUT,
     )
     response.raise_for_status()
-    data = response.json()
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise requests.RequestException("Invalid JSON response from ImmPort API", response=response) from exc
     hits = data.get("hits") or {}
     total = hits.get("total") or {}
     total_found = int(total.get("value", 0)) if isinstance(total, dict) else int(total or 0)
