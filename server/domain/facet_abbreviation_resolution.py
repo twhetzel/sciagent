@@ -6,6 +6,7 @@ import re
 
 from .dataset_search import ConceptMapping, InterpretedQuery
 from .facet_query_normalization import extract_parenthetical_abbrevs, normalize_unicode_text
+from .ontology_providers.obo_foundry_policy import SLOT_CURIE_PREFIXES
 from .ontology_grounding import ground_term
 from .ontology_providers.curated import CuratedAliasProvider
 from .synonym_classification import (
@@ -69,13 +70,6 @@ ACCEPTABLE_MATCH_TYPES = frozenset(
 
 MIN_ABBREV_CONFIDENCE = 0.74
 
-SLOT_CURIE_PREFIXES: dict[str, tuple[str, ...]] = {
-    "disease": ("MONDO:", "HP:"),
-    "tissue": ("UBERON:",),
-    "assay": ("OBI:", "GO:"),
-    "organism": ("NCBITaxon:",),
-}
-
 _curated_provider = CuratedAliasProvider()
 
 
@@ -116,7 +110,9 @@ def ground_phrase_variants(
     """
     Try curated and dynamic grounding across punctuation-normalized phrase variants.
 
-    Returns (candidates, used_dynamic_attempt).
+    Returns (candidates, used_dynamic_attempt). The attempt flag is True only when
+    dynamic lookup returned at least one candidate (empty OLS/BioPortal responses
+    do not consume the phrase-resolution attempt budget).
     """
     from .facet_query_normalization import grounding_phrase_variants
 
@@ -131,7 +127,7 @@ def ground_phrase_variants(
             results = ground_term(slot, variant, top_k=1)
             if results:
                 return results, True
-        return [], True
+        return [], False
 
     return [], False
 

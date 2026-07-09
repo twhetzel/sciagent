@@ -14,8 +14,16 @@ logger = logging.getLogger(__name__)
 
 GEO_REPOSITORY = "GEO"
 GXA_REPOSITORY = "Expression Atlas"
+IMMPORT_REPOSITORY = "ImmPort"
+VIVLI_REPOSITORY = "Vivli"
 GXA_JSON_BASE = "https://www.ebi.ac.uk/gxa/json/experiments"
 GXA_SITE_BASE = "https://www.ebi.ac.uk/gxa"
+IMMPORT_SEARCH_BASE = "https://www.immport.org/data/query/api/search/study"
+IMMPORT_STUDY_BASE = "https://www.immport.org/shared/study"
+VIVLI_PLATFORM_BASE = "https://vivli.org/"
+ACCESSCLINICALDATA_BASE = "https://accessclinicaldata.niaid.nih.gov/study-viewer/clinical_trials"
+CLINICALTRIALS_BASE = "https://clinicaltrials.gov/study"
+NIAID_QUERY_BASE = "https://api.data.niaid.nih.gov/v1/query"
 REQUEST_TIMEOUT = 15
 
 ACCESS_TYPE_REPOSITORY = "repository_page"
@@ -281,6 +289,176 @@ def discover_gxa_access(candidate: DatasetCandidate) -> tuple[AccessSummary, lis
     return summary, references
 
 
+def discover_immport_access(candidate: DatasetCandidate) -> tuple[AccessSummary, list[DataAccessReference]]:
+    """Derive ImmPort repository and shared-data API references from study metadata."""
+    accession = candidate.accession.upper()
+    repository_url = candidate.url or f"{IMMPORT_STUDY_BASE}/{accession}"
+    metadata = candidate.source_metadata or candidate.metadata_fields
+    references: list[DataAccessReference] = []
+
+    references.append(
+        _reference(
+            ref_id=f"{accession}-repository-page",
+            label=f"ImmPort study page ({accession})",
+            url=repository_url,
+            access_type=ACCESS_TYPE_REPOSITORY,
+            notes="Primary ImmPort shared study overview page.",
+        )
+    )
+
+    references.append(
+        _reference(
+            ref_id=f"{accession}-shared-search-api",
+            label=f"ImmPort shared search API ({accession})",
+            url=f"{IMMPORT_SEARCH_BASE}?studyAccession={accession}&pageSize=1",
+            access_type=ACCESS_TYPE_API,
+            notes="Shared Data API search endpoint for study metadata (no file transfer).",
+        )
+    )
+
+    doi = metadata.get("doi", "").strip()
+    if doi:
+        doi_url = doi if doi.startswith("http") else f"https://doi.org/{doi}"
+        references.append(
+            _reference(
+                ref_id=f"{accession}-doi",
+                label=f"Study DOI ({accession})",
+                url=doi_url,
+                access_type=ACCESS_TYPE_REPOSITORY,
+                notes="DOI landing page for the ImmPort study record.",
+            )
+        )
+
+    pubmed_ids = metadata.get("pubmed_id", "").strip()
+    for index, pubmed_id in enumerate(
+        [item.strip() for item in pubmed_ids.split(",") if item.strip()],
+        start=1,
+    ):
+        references.append(
+            _reference(
+                ref_id=f"{accession}-pubmed-{index}",
+                label=f"PubMed ({pubmed_id})",
+                url=f"https://pubmed.ncbi.nlm.nih.gov/{pubmed_id}/",
+                access_type=ACCESS_TYPE_REPOSITORY,
+                notes="Linked publication for the ImmPort study.",
+            )
+        )
+
+    release_version = metadata.get("latest_data_release_version", "").strip()
+    release_date = metadata.get("latest_data_release_date", "").strip()
+    summary_bits = [
+        f"{len(references)} access reference(s) for {accession} via ImmPort.",
+        "Shared study metadata is open; downloading data may require an ImmPort account.",
+    ]
+    if release_version or release_date:
+        summary_bits.append(
+            "Latest data release: "
+            + ", ".join(part for part in (release_version, release_date) if part)
+            + "."
+        )
+
+    summary = AccessSummary(
+        text=" ".join(summary_bits),
+        repository_page_url=repository_url,
+        reference_count=len(references),
+        direct_downloads_available=False,
+        auth_may_be_required=True,
+    )
+    return summary, references
+
+
+def discover_vivli_access(candidate: DatasetCandidate) -> tuple[AccessSummary, list[DataAccessReference]]:
+    """Derive Vivli / AccessClinicalData@NIAID request-based access references."""
+    accession = candidate.accession.upper()
+    repository_url = candidate.url or f"{CLINICALTRIALS_BASE}/{accession}"
+    metadata = candidate.source_metadata or candidate.metadata_fields
+    references: list[DataAccessReference] = []
+
+    references.append(
+        _reference(
+            ref_id=f"{accession}-repository-page",
+            label=f"Study landing page ({accession})",
+            url=repository_url,
+            access_type=ACCESS_TYPE_REPOSITORY,
+            notes="Primary study metadata page from Vivli or AccessClinicalData@NIAID.",
+        )
+    )
+
+    references.append(
+        _reference(
+            ref_id=f"{accession}-clinicaltrials-gov",
+            label=f"ClinicalTrials.gov ({accession})",
+            url=f"{CLINICALTRIALS_BASE}/{accession}",
+            access_type=ACCESS_TYPE_REPOSITORY,
+            notes="Public clinical trial registration page for the NCT identifier.",
+        )
+    )
+
+    references.append(
+        _reference(
+            ref_id=f"{accession}-vivli-platform",
+            label=f"Vivli platform search ({accession})",
+            url=f"{VIVLI_PLATFORM_BASE}?search={accession}",
+            access_type=ACCESS_TYPE_CONTROLLED,
+            requires_auth=True,
+            notes="Search and request controlled-access data packages on the Vivli platform.",
+        )
+    )
+
+    data_catalog = metadata.get("data_catalog", "").strip().lower()
+    if "accessclinicaldata" in data_catalog:
+        references.append(
+            _reference(
+                ref_id=f"{accession}-accessclinicaldata",
+                label=f"AccessClinicalData@NIAID ({accession})",
+                url=f"{ACCESSCLINICALDATA_BASE}/{accession}",
+                access_type=ACCESS_TYPE_CONTROLLED,
+                requires_auth=True,
+                notes="NIAID controlled-access portal for data access requests (DAR/DUA).",
+            )
+        )
+
+    references.append(
+        _reference(
+            ref_id=f"{accession}-niaid-discovery-api",
+            label=f"NIAID Discovery API ({accession})",
+            url=f"{NIAID_QUERY_BASE}?q={accession}",
+            access_type=ACCESS_TYPE_API,
+            notes="NIAID Data Ecosystem Discovery API metadata query (no file transfer).",
+        )
+    )
+
+    doi = metadata.get("doi", "").strip()
+    if doi:
+        doi_url = doi if doi.startswith("http") else f"https://doi.org/{doi}"
+        references.append(
+            _reference(
+                ref_id=f"{accession}-doi",
+                label=f"Study DOI ({accession})",
+                url=doi_url,
+                access_type=ACCESS_TYPE_REPOSITORY,
+                notes="DOI landing page for the Vivli study record.",
+            )
+        )
+
+    access_note = metadata.get("conditions_of_access", "").strip()
+    summary_bits = [
+        f"{len(references)} access reference(s) for {accession} via Vivli.",
+        "Clinical trial data packages require a data access request and approval.",
+    ]
+    if access_note:
+        summary_bits.append(f"Conditions of access: {access_note}.")
+
+    summary = AccessSummary(
+        text=" ".join(summary_bits),
+        repository_page_url=repository_url,
+        reference_count=len(references),
+        direct_downloads_available=False,
+        auth_may_be_required=True,
+    )
+    return summary, references
+
+
 def discover_candidate_access(
     candidate: DatasetCandidate,
 ) -> tuple[AccessSummary, list[DataAccessReference]]:
@@ -289,6 +467,10 @@ def discover_candidate_access(
         return discover_geo_access(candidate)
     if candidate.repository == GXA_REPOSITORY:
         return discover_gxa_access(candidate)
+    if candidate.repository == IMMPORT_REPOSITORY:
+        return discover_immport_access(candidate)
+    if candidate.repository == VIVLI_REPOSITORY:
+        return discover_vivli_access(candidate)
     repository_url = candidate.url or ""
     references = [
         _reference(

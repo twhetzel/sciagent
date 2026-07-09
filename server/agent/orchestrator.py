@@ -19,13 +19,19 @@ class AgentOrchestrator:
         self.prompts = SystemPrompts()
         self.max_iterations = 5
         
-    def run(self, query: str) -> tuple[str, List[Dict], Dict[str, Any] | None]:
+    def run(
+        self,
+        query: str,
+        *,
+        search_options=None,
+    ) -> tuple[str, List[Dict], Dict[str, Any] | None]:
         """
         Main entry point for the agent
-        
+
         Args:
             query: User's question or request
-            
+            search_options: Optional dataset discovery retrieval options
+
         Returns:
             tuple: (final_response, execution_traces, optional dataset_search payload)
         """
@@ -34,7 +40,11 @@ class AgentOrchestrator:
         if is_dataset_discovery_query(query):
             repositories = self._resolve_dataset_repositories()
             if repositories:
-                return self._run_dataset_discovery(query, repositories=repositories)
+                return self._run_dataset_discovery(
+                    query,
+                    repositories=repositories,
+                    search_options=search_options,
+                )
 
         self.tracer.start_trace("agent_run", {"query": query})
         
@@ -79,22 +89,35 @@ class AgentOrchestrator:
             return f"Error: {str(e)}", self.tracer.get_traces(), None
 
     def _resolve_dataset_repositories(self) -> list[str]:
-        """Return all enabled dataset repositories (GEO first, then Expression Atlas)."""
-        repositories: list[str] = []
-        if self.registry.get_tool("geo_dataset_search"):
-            repositories.append("GEO")
-        if self.registry.get_tool("expression_atlas"):
-            repositories.append("Expression Atlas")
-        return repositories
+        """Return enabled dataset repositories from the central registry (merge priority order)."""
+        from domain.dataset_repository_registry import resolve_enabled_dataset_repositories
+
+        return resolve_enabled_dataset_repositories(self.registry)
 
     def _run_dataset_discovery(
         self,
         query: str,
         *,
         repositories: list[str],
+        search_options=None,
     ) -> tuple[str, List[Dict], Dict[str, Any]]:
         """Run the ontology-grounded dataset discovery vertical with explicit trace steps."""
         from agent import dataset_discovery as pipeline
+        from domain.dataset_search import DatasetSearchOptions
+
+        if search_options is None:
+            from sciagent_server.config import resolve_dataset_search_options
+
+            search_options = resolve_dataset_search_options(None)
+        elif not isinstance(search_options, DatasetSearchOptions):
+            from sciagent_server.config import resolve_dataset_search_options
+
+            payload = (
+                search_options.model_dump()
+                if hasattr(search_options, "model_dump")
+                else dict(search_options)
+            )
+            search_options = resolve_dataset_search_options(payload)
 
         repository_label = (
             repositories[0]
@@ -113,7 +136,7 @@ class AgentOrchestrator:
         )
 
         try:
-            interpreted = pipeline.interpret_query(query)
+            interpreted, llm_trace = pipeline.interpret_query_pipeline(query)
             self.tracer.log_step(
                 "interpret_query",
                 {
@@ -122,6 +145,18 @@ class AgentOrchestrator:
                     "interpreted_query": interpreted.model_dump(),
                 },
             )
+            if llm_trace is not None:
+                self.tracer.log_step(
+                    "interpret_llm",
+                    {
+                        "label": "Interpret Query (LLM fallback)",
+                        "description": (
+                            "Fill missing facets using LLM extraction validated through "
+                            "ontology grounding when ANTHROPIC_API_KEY is set"
+                        ),
+                        **llm_trace,
+                    },
+                )
 
             concept_mappings = pipeline.ground_query(interpreted)
             self.tracer.log_step(
@@ -134,12 +169,26 @@ class AgentOrchestrator:
                 },
             )
 
+            from domain.dataset_repository_registry import filter_repositories_for_interpreted_query
+
+            repositories, skipped_repositories = filter_repositories_for_interpreted_query(
+                repositories,
+                interpreted,
+                query=query,
+            )
+            if not repositories:
+                raise ValueError(
+                    "No dataset repositories remain for this query after applying assay filters. "
+                    "Enable OmicsDI for metabolomics queries."
+                )
+
             search_result = (
                 pipeline.search_repositories(
                     repositories,
                     concept_mappings,
                     query=query,
                     interpreted_query=interpreted,
+                    include_text_broad=search_options.include_text_broad,
                 )
                 if len(repositories) > 1
                 else pipeline.search_repository(
@@ -147,6 +196,7 @@ class AgentOrchestrator:
                     concept_mappings,
                     query=query,
                     interpreted_query=interpreted,
+                    include_text_broad=search_options.include_text_broad,
                 )
             )
             self.tracer.log_step(
@@ -160,6 +210,7 @@ class AgentOrchestrator:
                         else f"Run multi-strategy {repositories[0]} search using grounded labels and synonyms"
                     ),
                     "repositories": repositories,
+                    "skipped_repositories": skipped_repositories,
                     "repository": search_result.get("repository", repository_label),
                     "search_term": search_result.get("search_term", ""),
                     "search_strategies": search_result.get("search_strategies", []),
@@ -244,6 +295,9 @@ class AgentOrchestrator:
                 search_strategies=search_result.get("search_strategies", []),
                 has_more=search_result.get("has_more", False),
                 retrieved_count=len(ranked),
+                retrievable_total=search_result.get("retrievable_total"),
+                include_text_broad=search_options.include_text_broad,
+                text_broad_total_found=search_result.get("text_broad_total_found"),
                 load_more_cursor=(
                     DatasetSearchCursor.model_validate(search_result["load_more_cursor"])
                     if search_result.get("load_more_cursor")

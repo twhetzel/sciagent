@@ -212,7 +212,7 @@ def test_golden_alzheimers_brain_query_interprets_and_grounds_tissue():
     assert interpreted.disease == "Alzheimer disease"
     assert interpreted.tissue == "brain"
     assert interpreted.assay == "RNA-seq"
-    assert interpreted.organism == "human"
+    assert interpreted.organism is None
 
     mappings = ground_interpreted_query(interpreted)
     tissue = next(mapping for mapping in mappings if mapping.slot == "tissue")

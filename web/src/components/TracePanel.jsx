@@ -12,6 +12,7 @@ function statusClass(status) {
 
 const DATASET_DISCOVERY_STEPS = new Set([
   'interpret_query',
+  'interpret_llm',
   'ground_query',
   'search_repository',
   'normalize_records',
@@ -173,6 +174,17 @@ function summarizeStep(name, data, steps, stepIndex) {
           .filter(Boolean)
           .join(', ') || 'Extract query facets',
         chips: [],
+      }
+    case 'interpret_llm':
+      return {
+        title: data?.label || 'Interpret Query (LLM fallback)',
+        summary:
+          data?.status === 'completed'
+            ? `Validated LLM facets: ${(data?.filled_slots || []).join(', ') || 'none'}`
+            : data?.status === 'no_validated_slots'
+              ? 'LLM proposed facets but none passed ontology validation'
+              : data?.error || data?.status || 'LLM interpret step',
+        chips: data?.filled_slots || [],
       }
     case 'ground_query':
       return {

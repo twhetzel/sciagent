@@ -29,11 +29,34 @@ from evaluation.golden_queries import GOLDEN_QUERIES
         ("Find RNA-seq datasets for skin tissue.", "skin"),
         ("Find RNA-seq datasets for muscle tissue.", "muscle"),
         ("Find RNA-seq datasets for tumor tissue.", "tumor"),
+        ("Find public proteomics datasets for breast cancer breast tissue.", "breast"),
+        ("Find public proteomics datasets for breast cancer.", None),
+        ("Find public metabolomics datasets for inflammatory bowel disease serum.", "serum"),
     ],
 )
-def test_common_anatomy_terms_are_interpreted(query: str, expected_tissue: str):
+def test_common_anatomy_terms_are_interpreted(query: str, expected_tissue: str | None):
     interpreted = interpret_dataset_query(query)
     assert interpreted.tissue == expected_tissue
+
+
+def test_breast_cancer_alone_does_not_infer_breast_tissue():
+    interpreted = interpret_dataset_query("Find public proteomics datasets for breast cancer.")
+    assert interpreted.disease == "breast cancer"
+    assert interpreted.tissue is None
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        ("Find public proteomics datasets for breast cancer breast tissue.", True),
+        ("Find public proteomics datasets for breast cancer.", False),
+        ("Find proteomics datasets from breast.", True),
+    ],
+)
+def test_is_breast_tissue_query(query: str, expected: bool):
+    from domain.tissue_anatomy import is_breast_tissue_query
+
+    assert is_breast_tissue_query(query) is expected
 
 
 def test_alzheimers_brain_golden_query_interprets_all_facets():
@@ -42,7 +65,7 @@ def test_alzheimers_brain_golden_query_interprets_all_facets():
     assert interpreted.disease == "Alzheimer disease"
     assert interpreted.tissue == "brain"
     assert interpreted.assay == "RNA-seq"
-    assert interpreted.organism == "human"
+    assert interpreted.organism is None
 
 
 def test_alzheimers_brain_golden_query_grounds_tissue_to_uberon_with_safe_terms():
@@ -70,10 +93,16 @@ def test_anatomy_seed_count_matches_documented_terms():
         "cortex",
         "hippocampus",
         "blood",
+        "serum",
+        "PBMC",
+        "T cell",
+        "B cell",
+        "NK cell",
         "liver",
         "lung",
         "kidney",
         "colon",
+        "breast",
         "ileum",
         "heart",
         "muscle",

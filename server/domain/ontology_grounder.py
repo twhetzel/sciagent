@@ -14,17 +14,17 @@ from domain.ontology_providers.curated import CuratedAliasProvider
 from domain.ontology_providers.llm import LLMDisambiguationProvider
 from domain.ontology_providers.ols import OLSProvider
 
-DEFAULT_PROVIDERS: tuple[str, ...] = ("ols", "bioportal", "llm_disambiguation", "curated")
+DEFAULT_PROVIDERS: tuple[str, ...] = ("curated", "ols", "bioportal", "llm_disambiguation")
 STRONG_MATCH_CONFIDENCE = 0.85
 CANDIDATE_POOL_SIZE = 12
 
 
 def default_providers() -> list[OntologyProvider]:
     return [
+        CuratedAliasProvider(),
         OLSProvider(),
         BioPortalProvider(),
         LLMDisambiguationProvider(),
-        CuratedAliasProvider(),
     ]
 
 
@@ -55,6 +55,10 @@ class OntologyGrounder:
                 continue
 
             merged = merge_concept_candidates(collected, slot=slot)
+            if provider.name == "curated" and merged:
+                best = merged[0]
+                if best.match_type in {"curated_exact", "curated_synonym"}:
+                    break
             if provider.name in {"ols", "bioportal"} and merged:
                 best = merged[0]
                 if (

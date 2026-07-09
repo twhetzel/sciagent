@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { postDatasetSearchMore, postQuery } from './api.js'
+import { getConfig, postDatasetSearchMore, postQuery } from './api.js'
 import { toggleTheme } from './theme.js'
 import ChatInput from './components/ChatInput.jsx'
 import ChatPanel from './components/ChatPanel.jsx'
 import DatasetResultsPanel from './components/DatasetResultsPanel.jsx'
+import DatasetSearchOptionsPanel from './components/DatasetSearchOptionsPanel.jsx'
 import TracePanel from './components/TracePanel.jsx'
 import ToolsSidebar from './components/ToolsSidebar.jsx'
 import './App.css'
@@ -18,8 +19,22 @@ export default function App() {
   const [newFromRank, setNewFromRank] = useState(null)
   const [manifestSelectedAccessions, setManifestSelectedAccessions] = useState(() => new Set())
   const [error, setError] = useState(null)
+  const [includeTextBroad, setIncludeTextBroad] = useState(true)
   const scrollRef = useRef(null)
   const loadMoreNoticeTimerRef = useRef(null)
+
+  useEffect(() => {
+    getConfig()
+      .then((config) => {
+        const defaultValue = config?.dataset_search_defaults?.include_text_broad
+        if (typeof defaultValue === 'boolean') {
+          setIncludeTextBroad(defaultValue)
+        }
+      })
+      .catch(() => {
+        // Keep local default when config is unavailable.
+      })
+  }, [])
 
   const activeTools = useMemo(() => {
     const names = new Set()
@@ -61,10 +76,13 @@ export default function App() {
     setMessages((prev) => [...prev, { role: 'user', content: query }])
 
     try {
-      const result = await postQuery(query)
+      const result = await postQuery(query, { include_text_broad: includeTextBroad })
       setMessages((prev) => [...prev, { role: 'assistant', content: result.response }])
       setTraces(result.traces || [])
       setDatasetSearch(result.dataset_search || null)
+      if (typeof result.dataset_search?.include_text_broad === 'boolean') {
+        setIncludeTextBroad(result.dataset_search.include_text_broad)
+      }
     } catch (err) {
       setError(err.message)
       setMessages((prev) => [
@@ -74,7 +92,7 @@ export default function App() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [includeTextBroad])
 
   const handleLoadMore = useCallback(async () => {
     if (!datasetSearch?.load_more_cursor) return
@@ -157,11 +175,12 @@ export default function App() {
         <ToolsSidebar activeTools={activeTools} />
         <div className={`main-column${datasetSearch ? ' main-column--discovery' : ''}`}>
           <section className="query-panel" aria-label="Query">
-            <p className="query-panel-label">
-              {datasetSearch
-                ? 'Refine your dataset query'
-                : 'Enter your scientific query'}
-            </p>
+            <p className="query-panel-label">Enter your scientific query</p>
+            <DatasetSearchOptionsPanel
+              includeTextBroad={includeTextBroad}
+              onIncludeTextBroadChange={setIncludeTextBroad}
+              disabled={loading}
+            />
             <ChatInput onSubmit={handleSubmit} loading={loading} placement="top" />
           </section>
           {datasetSearch ? (

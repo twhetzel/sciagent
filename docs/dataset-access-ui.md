@@ -96,7 +96,7 @@ Selection state lives in `App.jsx` as a `Set` of accessions; it resets on a new 
 
 ## Backend handoff
 
-Access discovery runs after ranking in `server/domain/dataset_access_discovery.py` and populates each `DatasetCandidate` with `access_summary` and `access_references` for GEO and Expression Atlas.
+Access discovery runs after ranking in `server/domain/dataset_access_discovery.py` and populates each `DatasetCandidate` with `access_summary` and `access_references` for GEO, Expression Atlas, ImmPort, and Vivli.
 
 Optional later: persist manifest server-side or add “refresh access details” per accession.
 

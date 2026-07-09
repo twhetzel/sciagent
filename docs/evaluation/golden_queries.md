@@ -204,3 +204,13 @@ Per-source hit counts are captured by searching each enabled repository individu
 ## Adding queries
 
 Append new strings to `GOLDEN_QUERIES` in `server/evaluation/golden_queries.py` and document the intent in this file. Prefer queries that exercise facet interpretation, abbreviation resolution, grounding, and multi-source ranking—not one-off accession lookups.
+
+## Related
+
+ImmPort immunology golden queries (asthma PBMC flow cytometry, influenza vaccine, peanut allergy, tuberculosis T cell) are documented separately in [immport_golden_queries.md](immport_golden_queries.md).
+
+OmicsDI multi-omics golden queries (UC colon RNA-seq, asthma lung proteomics, Alzheimer brain proteomics, breast cancer proteomics, IBD serum metabolomics) are documented separately in [omicsdi_golden_queries.md](omicsdi_golden_queries.md).
+
+ProteomeXchange proteomics golden queries are documented in [proteomexchange_golden_queries.md](proteomexchange_golden_queries.md).
+
+Vivli clinical trial golden queries are documented in [vivli_golden_queries.md](vivli_golden_queries.md).

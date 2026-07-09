@@ -11,6 +11,11 @@ import {
 } from '../utils/datasetAccess.js'
 import { FacetStatusInfoTooltip, FacetStatusLabelTooltip } from './FacetStatusTooltip.jsx'
 import {
+  formatTextBroadTotalsLine,
+  isTextBroadEnabled,
+  summarizeRetrievalCounts,
+} from '../utils/datasetSearchCopy.js'
+import {
   buildFacetSummary,
   deriveFacetStatus,
   FACET_STATUS_ORDER,
@@ -47,9 +52,65 @@ function repositoryLabel(datasetSearch) {
 
 function maxResultsEnvVar(datasetSearch) {
   const repo = repositoryLabel(datasetSearch)
-  if (repo.includes('+')) return 'GEO_MAX_RESULTS and EXPRESSION_ATLAS_MAX_RESULTS'
+  if (repo.includes('+')) return 'GEO_MAX_RESULTS, EXPRESSION_ATLAS_MAX_RESULTS, and IMMPORT_MAX_RESULTS'
   if (repo === 'GEO') return 'GEO_MAX_RESULTS'
+  if (repo === 'ImmPort') return 'IMMPORT_MAX_RESULTS'
+  if (repo === 'Expression Atlas') return 'EXPRESSION_ATLAS_MAX_RESULTS'
   return 'EXPRESSION_ATLAS_MAX_RESULTS'
+}
+
+function formatStrategyLabel(strategy, supplemental) {
+  if (supplemental || strategy === 'text_broad') {
+    return 'text_broad (free-text supplement)'
+  }
+  return strategy
+}
+
+function SearchStrategiesTable({ strategies }) {
+  if (!strategies?.length) return null
+
+  const showRepository = strategies.some((item) => item.repository)
+
+  return (
+    <div className="search-strategies-panel">
+      <div className="search-strategies-header">
+        <strong>Repository search strategies</strong>
+        <span className="search-strategies-note">
+          Facet strategies use structured repository facets.{' '}
+          <code>text_broad</code> is a supplemental free-text pass (not NDE-equivalent).
+        </span>
+      </div>
+      <table className="search-strategies-table">
+        <thead>
+          <tr>
+            <th scope="col">Strategy</th>
+            <th scope="col">Query</th>
+            {showRepository ? <th scope="col">Repository</th> : null}
+            <th scope="col">Hits</th>
+            <th scope="col">Retrieved</th>
+            <th scope="col">New</th>
+          </tr>
+        </thead>
+        <tbody>
+          {strategies.map((item, index) => (
+            <tr
+              key={`${item.strategy}-${item.search_term}-${index}`}
+              className={item.supplemental ? 'search-strategies-row--supplemental' : undefined}
+            >
+              <th scope="row">{formatStrategyLabel(item.strategy, item.supplemental)}</th>
+              <td>
+                <code>{item.search_term}</code>
+              </td>
+              {showRepository ? <td>{item.repository || '—'}</td> : null}
+              <td>{formatCount(item.total_found)}</td>
+              <td>{formatCount(item.retrieved)}</td>
+              <td>{formatCount(item.new_ids)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
 }
 
 function HitSummaryBanner({ datasetSearch, candidateCount, loadingMore }) {
@@ -58,26 +119,61 @@ function HitSummaryBanner({ datasetSearch, candidateCount, loadingMore }) {
   const primaryTotalFound = datasetSearch.primary_total_found
   const maxResults = datasetSearch.max_results
   const shown = datasetSearch.retrieved_count ?? candidateCount ?? 0
-  const hasMore = totalFound > shown
+  const retrievableTotal = datasetSearch.retrievable_total
+  const hasMore = datasetSearch.has_more || totalFound > shown
   const strictDiffers =
     primaryTotalFound != null && primaryTotalFound !== totalFound
+  const paginationGap =
+    !datasetSearch.has_more &&
+    retrievableTotal != null &&
+    totalFound > retrievableTotal
+  const textBroadEnabled = isTextBroadEnabled(datasetSearch)
+  const { supplemental, facetRetrieved, facetTotal, textBroadTotal } =
+    summarizeRetrievalCounts(datasetSearch)
+  const repositoryTotalsLine = textBroadEnabled
+    ? formatTextBroadTotalsLine(facetTotal, textBroadTotal, formatCount)
+    : `${formatCount(totalFound)} ${repository} hits`
+
+  let headline
+  if (loadingMore) {
+    headline = textBroadEnabled
+      ? `Loading more… (${formatCount(shown)} ranked · ${formatTextBroadTotalsLine(facetTotal, textBroadTotal, formatCount)})`
+      : `Loading more… (${formatCount(shown)} ranked so far)`
+  } else if (hasMore) {
+    headline = textBroadEnabled
+      ? `Showing ${formatCount(shown)} ranked · ${repositoryTotalsLine}`
+      : `Showing ${formatCount(shown)} of ${formatCount(totalFound)} ${repository} hits`
+  } else if (textBroadEnabled && supplemental > 0) {
+    headline = `Showing ${formatCount(shown)} ranked · ${formatCount(facetRetrieved)} facet + ${formatCount(supplemental)} supplemental`
+  } else if (textBroadEnabled && textBroadTotal != null) {
+    headline = `Showing ${formatCount(shown)} ranked · ${repositoryTotalsLine}`
+  } else {
+    headline = `Showing ${formatCount(shown)} ranked ${shown === 1 ? 'hit' : 'hits'}`
+  }
 
   return (
     <div
       className={`dataset-results-hit-summary${hasMore ? ' dataset-results-hit-summary--truncated' : ''}${loadingMore ? ' dataset-results-hit-summary--loading' : ''}`}
       role="status"
     >
-      <strong>
-        {loadingMore
-          ? `Loading more… (${formatCount(shown)} ranked so far)`
-          : hasMore
-            ? `Showing ${formatCount(shown)} of ${formatCount(totalFound)} ${repository} hits`
-            : `Showing ${formatCount(shown)} ranked ${shown === 1 ? 'hit' : 'hits'}`}
-      </strong>
+      <strong>{headline}</strong>
       <span>
         {hasMore ? (
           <>
             Retrieved and ranked the top matches by evidence coverage
+            {textBroadEnabled && textBroadTotal != null ? (
+              <>
+                {' '}
+                · <code>text_broad</code> free-text reports {formatCount(textBroadTotal)}{' '}
+                {textBroadTotal === 1 ? 'hit' : 'hits'} (separate from facet counts above)
+              </>
+            ) : textBroadEnabled ? (
+              <>
+                {' '}
+                · supplemental free-text (<code>text_broad</code>) may add studies beyond
+                facet scope
+              </>
+            ) : null}
             {strictDiffers ? (
               <>
                 {' '}
@@ -97,6 +193,23 @@ function HitSummaryBanner({ datasetSearch, candidateCount, loadingMore }) {
         ) : (
           <>
             All matching records retrieved from {repository} were ranked below.
+            {textBroadEnabled && supplemental > 0 ? (
+              <>
+                {' '}
+                {formatCount(supplemental)}{' '}
+                {supplemental === 1 ? 'study was' : 'studies were'} found only via{' '}
+                <code>text_broad</code> free-text supplement (not NDE-equivalent facet
+                counts).
+              </>
+            ) : null}
+            {paginationGap ? (
+              <>
+                {' '}
+                {repository} reports {formatCount(totalFound)} facet hits;{' '}
+                {formatCount(retrievableTotal)} {retrievableTotal === 1 ? 'is' : 'are'}{' '}
+                available via API pagination.
+              </>
+            ) : null}
             {strictDiffers ? (
               <>
                 {' '}
@@ -775,6 +888,8 @@ export default function DatasetResultsPanel({
         )}
 
         <FacetCoverageSummary candidates={candidates} mappings={mappings} />
+
+        <SearchStrategiesTable strategies={datasetSearch.search_strategies} />
 
         <AgentContextPanel agentContext={agentContext} />
       </section>

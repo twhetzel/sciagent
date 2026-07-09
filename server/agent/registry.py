@@ -247,3 +247,117 @@ class ToolRegistry:
             )
         except ImportError:
             pass
+
+        try:
+            from tools.immport_dataset_search import search_immport_datasets
+            self.register_tool(
+                name="immport",
+                description=(
+                    "Search ImmPort shared immunology study metadata using grounded ontology concepts"
+                ),
+                function=search_immport_datasets,
+                parameters={
+                    "query": {"type": "str", "required": True, "description": "Search query"},
+                    "interpreted_query": {
+                        "type": "dict",
+                        "required": False,
+                        "description": (
+                            "Interpreted disease/tissue/assay facets for multi-strategy search"
+                        ),
+                    },
+                },
+            )
+        except ImportError:
+            pass
+
+        try:
+            from tools.omicsdi_dataset_search import search_omicsdi_datasets
+            self.register_tool(
+                name="omicsdi",
+                description=(
+                    "Search OmicsDI for proteomics, metabolomics, and transcriptomics datasets "
+                    "using grounded ontology concepts"
+                ),
+                function=search_omicsdi_datasets,
+                parameters={
+                    "query": {"type": "str", "required": True, "description": "Search query"},
+                    "interpreted_query": {
+                        "type": "dict",
+                        "required": False,
+                        "description": (
+                            "Interpreted disease/tissue/assay facets for multi-strategy search"
+                        ),
+                    },
+                },
+            )
+        except ImportError:
+            pass
+
+        try:
+            from tools.proteomexchange_dataset_search import search_proteomexchange_datasets
+            self.register_tool(
+                name="proteomexchange",
+                description=(
+                    "Search ProteomeXchange for public proteomics datasets "
+                    "using grounded ontology concepts"
+                ),
+                function=search_proteomexchange_datasets,
+                parameters={
+                    "query": {"type": "str", "required": True, "description": "Search query"},
+                    "interpreted_query": {
+                        "type": "dict",
+                        "required": False,
+                        "description": (
+                            "Interpreted disease/tissue/assay facets for multi-strategy search"
+                        ),
+                    },
+                },
+            )
+        except ImportError:
+            pass
+
+        try:
+            from tools.vdjserver_dataset_search import search_vdjserver_datasets
+            self.register_tool(
+                name="vdjserver",
+                description=(
+                    "Search VDJServer for public immune repertoire (AIRR-seq) studies "
+                    "using grounded ontology concepts"
+                ),
+                function=search_vdjserver_datasets,
+                parameters={
+                    "query": {"type": "str", "required": True, "description": "Search query"},
+                    "interpreted_query": {
+                        "type": "dict",
+                        "required": False,
+                        "description": (
+                            "Interpreted disease/tissue/assay facets for multi-strategy search"
+                        ),
+                    },
+                },
+            )
+        except ImportError:
+            pass
+
+        try:
+            from tools.vivli_dataset_search import search_vivli_datasets
+            self.register_tool(
+                name="vivli",
+                description=(
+                    "Search Vivli and AccessClinicalData@NIAID clinical trial metadata "
+                    "using grounded ontology concepts"
+                ),
+                function=search_vivli_datasets,
+                parameters={
+                    "query": {"type": "str", "required": True, "description": "Search query"},
+                    "interpreted_query": {
+                        "type": "dict",
+                        "required": False,
+                        "description": (
+                            "Interpreted disease/tissue/assay facets for multi-strategy search"
+                        ),
+                    },
+                },
+            )
+        except ImportError:
+            pass

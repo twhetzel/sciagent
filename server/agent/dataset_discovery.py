@@ -5,10 +5,28 @@ Ontology-grounded dataset discovery pipeline for multiple repositories.
 from __future__ import annotations
 
 from collections import defaultdict
+from typing import Any
 
 from domain.dataset_annotation import annotate_dataset_candidates
 from domain.dataset_access_discovery import enrich_candidates_with_access
 from domain.dataset_context_export import export_dataset_search_agent_context
+from domain.dataset_repository_registry import (
+    GEO_REPOSITORY,
+    GXA_REPOSITORY,
+    IMMPORT_REPOSITORY,
+    any_load_more_enabled,
+    fetch_more_repository_records,
+    fetch_repository_records,
+    filter_repositories_for_interpreted_query,
+    get_repository_spec,
+    infer_record_repository,
+    is_repository_tool_enabled,
+    pick_load_more_cursor,
+    repository_priority_map,
+    repository_supports_load_more,
+    resolve_repository_for_load_more,
+    supported_repositories,
+)
 from domain.dataset_search import (
     DatasetCandidate,
     DatasetSearchCursor,
@@ -19,27 +37,9 @@ from domain.facet_search_strategies import STRATEGY_PRIORITY
 from domain.ontology_grounding import enrich_concept_mappings, ground_interpreted_query
 from domain.query_interpretation import interpret_dataset_query
 from domain.ranking import rank_annotated_candidates
-from tools.expression_atlas import (
-    fetch_gxa_repository_records,
-    get_expression_atlas_max_results,
-    normalize_gxa_records,
-)
-from tools.geo_dataset_search import (
-    fetch_geo_repository_records,
-    fetch_more_geo_repository_records,
-    get_geo_max_results,
-    normalize_geo_records,
-)
 
-GEO_REPOSITORY = "GEO"
-GXA_REPOSITORY = "Expression Atlas"
-
-SUPPORTED_REPOSITORIES = frozenset({GEO_REPOSITORY, GXA_REPOSITORY})
-
-REPOSITORY_PRIORITY = {
-    GEO_REPOSITORY: 0,
-    GXA_REPOSITORY: 1,
-}
+SUPPORTED_REPOSITORIES = supported_repositories()
+REPOSITORY_PRIORITY = repository_priority_map()
 
 
 def _as_repository_list(repository: str | list[str]) -> list[str]:
@@ -66,15 +66,7 @@ def _record_strategy_priority(record: dict) -> int:
 
 
 def _infer_record_repository(record: dict) -> str:
-    tagged = record.get("_source_repository")
-    if tagged in SUPPORTED_REPOSITORIES:
-        return tagged
-    accession = str(record.get("accession") or "").upper()
-    if accession.startswith("GSE"):
-        return GEO_REPOSITORY
-    if accession.startswith("E-"):
-        return GXA_REPOSITORY
-    return GEO_REPOSITORY
+    return infer_record_repository(record)
 
 
 def merge_repository_search_results(search_results: list[dict]) -> dict:
@@ -113,11 +105,6 @@ def merge_repository_search_results(search_results: list[dict]) -> dict:
         for strategy in result.get("search_strategies", []):
             search_strategies.append({**strategy, "repository": repository})
 
-    geo_result = next(
-        (result for result in search_results if result.get("repository") == GEO_REPOSITORY),
-        None,
-    )
-
     return {
         "records": list(merged_records.values()),
         "total_found": sum(result.get("total_found", 0) for result in search_results),
@@ -131,7 +118,7 @@ def merge_repository_search_results(search_results: list[dict]) -> dict:
         "search_term": search_results[0].get("search_term"),
         "search_strategies": search_strategies,
         "has_more": any(result.get("has_more") for result in search_results),
-        "load_more_cursor": geo_result.get("load_more_cursor") if geo_result else None,
+        "load_more_cursor": pick_load_more_cursor(search_results),
         "repositories_searched": repositories,
     }
 
@@ -139,6 +126,15 @@ def merge_repository_search_results(search_results: list[dict]) -> dict:
 def interpret_query(query: str) -> InterpretedQuery:
     """Step 1: extract structured facets from the user query."""
     return interpret_dataset_query(query)
+
+
+def interpret_query_pipeline(query: str) -> tuple[InterpretedQuery, dict[str, Any] | None]:
+    """Step 1 (+ optional LLM): rules first, then validated LLM facet fallback."""
+    from domain.llm_query_interpretation import maybe_llm_interpret_query
+
+    interpreted = interpret_dataset_query(query)
+    interpreted, llm_trace = maybe_llm_interpret_query(query, interpreted)
+    return interpreted, llm_trace
 
 
 def ground_query(interpreted: InterpretedQuery):
@@ -161,26 +157,18 @@ def search_repository(
     *,
     query: str = "",
     interpreted_query: InterpretedQuery | None = None,
+    include_text_broad: bool = True,
 ) -> dict:
     """Step 3: multi-strategy repository search using grounded labels and synonyms."""
-    if repository == GEO_REPOSITORY:
-        return fetch_geo_repository_records(
-            concept_mappings,
-            max_results=max_results,
-            query=query,
-            interpreted_query=(
-                interpreted_query.model_dump() if interpreted_query is not None else None
-            ),
-        )
-    if repository == GXA_REPOSITORY:
-        return fetch_gxa_repository_records(
-            concept_mappings,
-            max_results=max_results,
-            query=query,
-            interpreted_query=interpreted_query,
-            species=_species_from_interpreted(interpreted_query),
-        )
-    raise ValueError(f"Unsupported dataset repository: {repository}")
+    return fetch_repository_records(
+        repository,
+        concept_mappings,
+        max_results=max_results,
+        query=query,
+        interpreted_query=interpreted_query,
+        species=_species_from_interpreted(interpreted_query),
+        include_text_broad=include_text_broad,
+    )
 
 
 def search_repositories(
@@ -190,6 +178,7 @@ def search_repositories(
     *,
     query: str = "",
     interpreted_query: InterpretedQuery | None = None,
+    include_text_broad: bool = True,
 ) -> dict:
     """Step 3 (multi): search each enabled repository and merge with deduplication."""
     unsupported = [repo for repo in repositories if repo not in SUPPORTED_REPOSITORIES]
@@ -203,6 +192,7 @@ def search_repositories(
             max_results=resolve_max_results(repository, max_results),
             query=query,
             interpreted_query=interpreted_query,
+            include_text_broad=include_text_broad,
         )
         for repository in repositories
     ]
@@ -211,11 +201,7 @@ def search_repositories(
 
 def normalize_records(repository: str, raw_records: list[dict]) -> list[DatasetCandidate]:
     """Step 4: repository record normalization into shared DatasetCandidate models."""
-    if repository == GEO_REPOSITORY:
-        return normalize_geo_records(raw_records)
-    if repository == GXA_REPOSITORY:
-        return normalize_gxa_records(raw_records)
-    raise ValueError(f"Unsupported dataset repository: {repository}")
+    return get_repository_spec(repository).normalize_records(raw_records)
 
 
 def normalize_merged_records(raw_records: list[dict]) -> list[DatasetCandidate]:
@@ -246,11 +232,7 @@ def discover_access(candidates: list[DatasetCandidate]) -> list[DatasetCandidate
 
 
 def resolve_max_results(repository: str, max_results: int | None = None) -> int:
-    if repository == GEO_REPOSITORY:
-        return get_geo_max_results(max_results)
-    if repository == GXA_REPOSITORY:
-        return get_expression_atlas_max_results(max_results)
-    raise ValueError(f"Unsupported dataset repository: {repository}")
+    return get_repository_spec(repository).resolve_max_results(max_results)
 
 
 def _build_dataset_search_result(
@@ -268,7 +250,8 @@ def _build_dataset_search_result(
         if cursor_payload is not None
         else None
     )
-    default_source = "NCBI GEO" if repository == GEO_REPOSITORY else "Expression Atlas"
+    spec = get_repository_spec(repository) if repository in SUPPORTED_REPOSITORIES else None
+    default_source = spec.source_display if spec else repository
     return DatasetSearchResult(
         query=query,
         interpreted_query=interpreted,
@@ -283,6 +266,9 @@ def _build_dataset_search_result(
         search_strategies=search_result.get("search_strategies", []),
         has_more=search_result.get("has_more", False),
         retrieved_count=len(ranked),
+        retrievable_total=search_result.get("retrievable_total"),
+        include_text_broad=search_result.get("include_text_broad"),
+        text_broad_total_found=search_result.get("text_broad_total_found"),
         load_more_cursor=cursor,
     )
 
@@ -299,8 +285,18 @@ def run_dataset_discovery(
     if unsupported:
         raise ValueError(f"Unsupported dataset repositories: {', '.join(unsupported)}")
 
-    interpreted = interpret_query(query)
+    interpreted, _llm_trace = interpret_query_pipeline(query)
     concept_mappings = ground_query(interpreted)
+    repositories, skipped_repositories = filter_repositories_for_interpreted_query(
+        repositories,
+        interpreted,
+        query=query,
+    )
+    if not repositories:
+        raise ValueError(
+            "No dataset repositories remain for this query after applying assay filters. "
+            "Try enabling OmicsDI for metabolomics queries."
+        )
     if len(repositories) == 1:
         repo = repositories[0]
         search_result = search_repository(
@@ -323,6 +319,9 @@ def run_dataset_discovery(
         candidates = normalize_merged_records(search_result.get("records", []))
         result_repository = search_result.get("repository", " + ".join(repositories))
 
+    if skipped_repositories:
+        search_result = {**search_result, "skipped_repositories": skipped_repositories}
+
     annotated = annotate_evidence(candidates, concept_mappings)
     ranked = rank_results(annotated, concept_mappings)
     ranked = discover_access(ranked)
@@ -340,24 +339,17 @@ def load_more_dataset_search(
     cursor: DatasetSearchCursor,
     existing_candidates: list[DatasetCandidate],
 ) -> DatasetSearchResult:
-    """
-    Fetch the next batch for a repository cursor, merge, and re-rank.
+    """Fetch the next batch for a repository cursor, merge, and re-rank."""
+    repository = resolve_repository_for_load_more(cursor, existing_candidates)
+    if not repository_supports_load_more(repository):
+        raise RuntimeError(f"Load-more is not implemented for {repository}")
 
-    Load-more is currently implemented for GEO only.
-    """
-    if cursor.concept_mappings:
-        repository = existing_candidates[0].repository if existing_candidates else GEO_REPOSITORY
-    else:
-        repository = GEO_REPOSITORY
-
-    if repository != GEO_REPOSITORY:
-        raise RuntimeError(f"Load-more is not yet implemented for {repository}")
-
-    more_result = fetch_more_geo_repository_records(cursor)
+    more_result = fetch_more_repository_records(repository, cursor)
     if more_result.get("error") and not more_result.get("records"):
         raise RuntimeError(more_result["error"])
 
-    new_candidates = normalize_records(GEO_REPOSITORY, more_result.get("records", []))
+    spec = get_repository_spec(repository)
+    new_candidates = normalize_records(repository, more_result.get("records", []))
     new_annotated = annotate_evidence(new_candidates, cursor.concept_mappings)
     merged = list(existing_candidates) + new_annotated
     ranked = rank_results(merged, cursor.concept_mappings)
@@ -373,9 +365,18 @@ def load_more_dataset_search(
     search_result = {
         "total_found": cursor.total_found,
         "primary_total_found": cursor.primary_total_found,
+        "retrievable_total": more_result.get("retrievable_total"),
+        "include_text_broad": more_result.get(
+            "include_text_broad",
+            cursor.include_text_broad,
+        ),
+        "text_broad_total_found": more_result.get(
+            "text_broad_total_found",
+            cursor.text_broad_total_found,
+        ),
         "max_results": cursor.max_results,
-        "source": more_result.get("source", "NCBI GEO"),
-        "repository": more_result.get("repository", GEO_REPOSITORY),
+        "source": more_result.get("source", spec.source_display),
+        "repository": more_result.get("repository", repository),
         "search_term": cursor.search_term,
         "search_strategies": [],
         "has_more": more_result.get("has_more", False),
@@ -387,7 +388,7 @@ def load_more_dataset_search(
         concept_mappings=cursor.concept_mappings,
         ranked=ranked,
         search_result=search_result,
-        repository=GEO_REPOSITORY,
+        repository=repository,
     )
 
 

@@ -6,13 +6,13 @@ from typing import Any, Protocol
 
 from domain.dataset_search import ConceptMapping
 
-FACET_ONTOLOGIES: dict[str, list[str]] = {
-    "disease": ["mondo", "efo", "hp"],
-    "phenotype": ["hp"],
-    "tissue": ["uberon"],
-    "assay": ["obi", "go"],
-    "organism": ["ncbitaxon"],
-}
+from .obo_foundry_policy import (
+    FACET_ONTOLOGIES,
+    SLOT_CURIE_PREFIXES,
+    SLOT_FALLBACK_ONTOLOGIES,
+    SLOT_ONTOLOGY_PREFERENCE,
+    SLOT_PRIMARY_ONTOLOGIES,
+)
 
 CONFIDENCE_BY_MATCH: dict[str, float] = {
     "exact": 0.92,
@@ -20,26 +20,6 @@ CONFIDENCE_BY_MATCH: dict[str, float] = {
     "curated_exact": 0.78,
     "curated_synonym": 0.74,
     "ai_expanded_synonym": 0.68,
-}
-
-SLOT_ONTOLOGY_PREFERENCE: dict[str, list[str]] = {
-    "disease": ["MONDO", "EFO", "HP"],
-    "phenotype": ["HP"],
-    "tissue": ["UBERON"],
-    "assay": ["OBI", "GO"],
-    "organism": ["NCBITAXON"],
-}
-
-SLOT_PRIMARY_ONTOLOGIES: dict[str, list[str]] = {
-    "disease": ["MONDO", "EFO"],
-    "phenotype": ["HP"],
-    "tissue": ["UBERON"],
-    "assay": ["OBI", "GO"],
-    "organism": ["NCBITAXON"],
-}
-
-SLOT_FALLBACK_ONTOLOGIES: dict[str, list[str]] = {
-    "disease": ["HP"],
 }
 
 
@@ -57,7 +37,7 @@ def ontology_tier(slot: str, candidate: ConceptMapping) -> int:
     """
     Return ontology priority tier for facet-aware candidate selection.
 
-    Tier 0 = primary ontologies for the facet (e.g. MONDO/EFO for disease).
+    Tier 0 = primary ontologies for the facet (OBO Foundry domain-aligned).
     Tier 1 = fallback-only ontologies (e.g. HP for disease).
     Tier 2 = everything else.
     """

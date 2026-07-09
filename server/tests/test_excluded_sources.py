@@ -76,7 +76,7 @@ def test_build_expression_atlas_params_uses_interpreted_query():
     assert params["interpreted_query"]["disease"] == "ulcerative colitis"
     assert params["interpreted_query"]["tissue"] == "colon"
     assert params["interpreted_query"]["assay"] == "RNA-seq"
-    assert params["species"] == "Homo sapiens"
+    assert "species" not in params
 
 
 def test_dataset_discovery_routes_to_gxa_when_geo_excluded():
@@ -90,4 +90,4 @@ def test_dataset_discovery_routes_to_gxa_when_geo_excluded():
             orchestrator.run("Find public RNA-seq datasets for ulcerative colitis colon tissue")
 
     run_discovery.assert_called_once()
-    assert run_discovery.call_args.kwargs["repositories"] == ["Expression Atlas"]
+    assert run_discovery.call_args.kwargs["repositories"] == ["Expression Atlas", "ImmPort"]

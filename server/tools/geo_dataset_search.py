@@ -438,6 +438,7 @@ def _build_cursor(
         primary_total_found=primary_total_found,
         max_results=max_results,
         search_term=primary_search_term,
+        repository=GEO_REPOSITORY,
         has_more=_compute_has_more(search_queries, strategy_offsets, strategy_totals),
     )
 

@@ -63,13 +63,18 @@ Queries like `BRCA1 gene`, `marfan syndrome variants`, or `Find RNA-seq datasets
 | `openalex` | OpenAlex REST API | Optional `OPENALEX_EMAIL` |
 | `europepmc` | Europe PMC REST API | None |
 | `expression_atlas` | EMBL-EBI Expression Atlas (EBI Search + GXA JSON API) | None; dataset-discovery pipeline when GEO is excluded or for routed dataset queries |
+| `immport` | ImmPort Shared Data API (study metadata search) | None; integrated dataset-discovery pipeline with GEO and Expression Atlas |
+| `vivli` | NIAID Data Ecosystem Discovery API (Vivli + AccessClinicalData@NIAID) | None; controlled-access clinical trial metadata in dataset-discovery pipeline |
+| `omicsdi` | OmicsDI REST API (proteomics, metabolomics, transcriptomics index) | None; multi-omics dataset-discovery pipeline |
+| `proteomexchange` | ProteomeXchange via OmicsDI REST API (PRIDE, MassIVE, jPOST, and other PX member repositories) | None; proteomics dataset-discovery pipeline |
+| `vdjserver` | VDJServer AIRR Data Commons API (immune repertoire / BCR-TCR studies) | None; immune repertoire dataset-discovery pipeline |
 | `mygene` | MyGene.info v3 | None |
 | `uniprot` | UniProt REST | None |
 | `clinvar` | NCBI E-utilities (ClinVar) | Same NCBI env vars as PubMed |
 | `alphafold` | AlphaFold EBI API | None |
 | `geo_dataset_search` | NCBI GEO (GDS) | Same NCBI env vars as PubMed |
 | `summarize` | OpenAI / Anthropic | `OPENAI_API_KEY` and/or `ANTHROPIC_API_KEY` |
-| *(post-processing)* | OLS / BioPortal / Claude | Optional `BIOPORTAL_API_KEY`, `ANTHROPIC_API_KEY` for ontology normalization |
+| *(post-processing)* | OLS / BioPortal / Claude | Optional `BIOPORTAL_API_KEY`, `ANTHROPIC_API_KEY` for ontology normalization and dataset `interpret_llm` fallback |
 
 See [How the orchestrator works](#how-the-orchestrator-works-no-llm-required) for the full routing model. To add a new source, follow [docs/adding-a-source.md](docs/adding-a-source.md). On the standard agent path, `tools/ontology_normalizer.py` runs after tools finish and appears in the trace as **Normalize (tool results)**. Dataset discovery queries use a separate seven-step pipeline documented below.
 
@@ -87,7 +92,10 @@ SciAgent Studio routes queries based on keywords and simple entity extraction (g
 | `marfan syndrome variants` | PubMed, OpenAlex, Europe PMC, ClinVar | Literature + ClinVar condition search (disease term extracted as `marfan`) |
 | `breast cancer literature` | PubMed, OpenAlex, Europe PMC | Normalized article hits from three literature sources |
 | `ulcerative colitis gene expression` | Expression Atlas | Ranked Expression Atlas experiments with accession, species, and type |
+| `Find clinical trial datasets for asthma` | Vivli dataset discovery (when enabled) | Ranked NCT-identified trials from Vivli / AccessClinicalData@NIAID with controlled-access badges |
 | `Find public RNA-seq datasets for ulcerative colitis colon tissue` | GEO + Expression Atlas dataset discovery (merged, de-duped when both enabled) | Ranked dataset panel with facets, evidence snippets, and per-repository strategy trace |
+| `Find public proteomics datasets for Alzheimer's disease brain tissue` | ProteomeXchange dataset discovery (when enabled) | Ranked PXD datasets from PRIDE/MassIVE/jPOST with proteomics evidence and ProteomeCentral links |
+| `Find public BCR repertoire datasets for COVID-19 blood` | VDJServer dataset discovery (when enabled) | Ranked AIRR-seq studies from VDJServer with disease/tissue/receptor evidence and BioProject links |
 | `TP53 expression atlas` | MyGene, UniProt, Expression Atlas | Gene/protein metadata plus matching Atlas experiments |
 | `search articles on cystic fibrosis` | PubMed, OpenAlex, Europe PMC | Literature results (disease keyword triggers literature tools) |
 | `AlphaFold structure for EGFR` | AlphaFold, UniProt | Structure confidence, PDB URL, protein metadata |
@@ -106,7 +114,7 @@ These queries use a dedicated trace path and **do not** call `ontology_normalize
 
 | Step | Responsibility |
 |------|----------------|
-| **Interpret Query** | Extract disease, tissue, assay, organism facets via regex patterns, abbreviation resolution, and phrase grounding |
+| **Interpret Query** | Extract disease, tissue, assay, organism facets via regex patterns, abbreviation resolution, and phrase grounding; **organism is only set when the query names it** (e.g. human, Homo sapiens) — no implicit human default |
 | **Ground Query** | Map requested facets to ontology concepts using curated aliases/cache plus ontology lookup providers |
 | **Search Repository** | Search GEO using grounded labels and synonyms |
 | **Normalize Records** | Convert GEO API payloads into shared `DatasetCandidate` records |
@@ -167,7 +175,7 @@ Related ontology synonyms can support ranking and evidence snippets but do not a
 | Multi-clause sentences | `I need RNA-seq. Disease is lupus. Tissue is kidney.` | No full-sentence semantic parser; each clause is not interpreted independently |
 | Unknown terms outside ontology coverage | Obscure disease names with no OLS/MONDO match | Dynamic lookup capped at 6 OLS/BioPortal attempts per query after curated misses |
 | List ordering for tissues | `ileum, colon, Crohn's disease` | First grounded tissue wins (`colon` before `ileum` in scan order) |
-| Single-word dynamic lookup | Rare one-word tissue/disease terms not in curated cache | Dynamic pass skips single-word phrases to reduce noise; relies on curated seed or multi-word context |
+| Single-word dynamic lookup | Rare one-word tissue/disease/assay terms not in curated cache | Dynamic pass allows single-word **disease** and **assay** when OLS returns a strong match; tissue still prefers curated anatomy; acronyms remain guarded |
 | Assay / organism regex coverage | `ChIP-seq`, `mouse` studies | Regex patterns are narrow; may need phrase grounding or pattern expansion |
 | LLM expansion | Obscure aliases | Requires `ANTHROPIC_API_KEY`; without it, only curated + OLS/BioPortal exact/synonym matches apply |
 | Unusual nested punctuation | Multiple parentheticals, heavy nested qualifiers | Parentheticals are stripped; very complex structure may still produce noisy n-grams |
@@ -391,13 +399,14 @@ See [`.env.example`](.env.example). Key variables:
 |----------|---------|
 | `SCIAGENT_HOST` / `SCIAGENT_PORT` | API bind address |
 | `SCIAGENT_CORS_ORIGINS` | Allowed browser origins (comma-separated) |
-| `SCIAGENT_EXCLUDED_SOURCES` | Optional blocklist of external data sources to skip (`pubmed`, `openalex`, `europepmc`, `expression_atlas`, `mygene`, `uniprot`, `clinvar`, `alphafold`, `geo_dataset_search`). Excluding `geo_dataset_search` routes dataset-style queries to Expression Atlas only; with both enabled, GEO and GXA results are merged and de-duplicated. |
+| `SCIAGENT_EXCLUDED_SOURCES` | Optional blocklist of external data sources to skip (`pubmed`, `openalex`, `europepmc`, `expression_atlas`, `immport`, `vivli`, `omicsdi`, `proteomexchange`, `vdjserver`, `mygene`, `uniprot`, `clinvar`, `alphafold`, `geo_dataset_search`). Excluding `geo_dataset_search` routes dataset-style queries to Expression Atlas, ImmPort, Vivli, OmicsDI, ProteomeXchange, and VDJServer when enabled; with all enabled, GEO, GXA, ImmPort, Vivli, OmicsDI, ProteomeXchange, and VDJServer results are merged and ranked together. |
 | `SCIAGENT_EXCLUDED_TOOLS` | Optional blocklist of agent tools to skip (`summarize`) |
 | `NCBI_EMAIL` | **Recommended.** Contact email for NCBI E-utilities (PubMed, ClinVar, GEO); `PUBMED_EMAIL` fallback |
 | `NCBI_API_KEY` | Optional NCBI API key for higher E-utilities rate limits |
 | `GEO_MAX_RESULTS` | Max GEO records to retrieve and rank per dataset-discovery query (default `15`, cap `200`) |
 | `OPENALEX_EMAIL` | OpenAlex `mailto` parameter |
 | `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | Optional summarization and ontology tier 3 |
+| `SCIAGENT_LLM_INTERPRET` | When `true` (default) and `ANTHROPIC_API_KEY` is set, run a separate `interpret_llm` trace step when rule-based interpret leaves disease/tissue/assay empty; set `false` to A/B test with LLM off |
 | `BIOPORTAL_API_KEY` | Optional BioPortal ontology lookup (tier 2) |
 
 ## Deployment
