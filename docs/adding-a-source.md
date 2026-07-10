@@ -30,7 +30,7 @@ User query
 
 The UI (`DatasetResultsPanel`) activates when `POST /api/query` returns `dataset_search` (not null). Chat-only tool output will **not** use the ranked dataset panel.
 
-**Related docs:** [dataset-access-ui.md](dataset-access-ui.md) (controlled-access badges and manifest export), [dataset-ranking.md](dataset-ranking.md) (ranking and evidence scoring).
+**Related docs:** [dataset-access-ui.md](dataset-access-ui.md) (controlled-access badges and manifest export), [dataset-ranking.md](dataset-ranking.md) (ranking and evidence scoring), [repository-field-capabilities.md](repository-field-capabilities.md) (per-repo facet search/response/evidence matrix).
 
 ---
 
@@ -75,7 +75,8 @@ Interpretation and grounding happen **before** repository search and are shared 
 | 2. Query interpretation | `domain/tissue_anatomy.py` or `domain/ontology_providers/curated.py` | Regex pattern + curated seed (canonical label, CURIE, synonyms) so phrase/regex resolution fills the facet slot |
 | 3. Repository search | `domain/repository_vocab/<repo>_vocab.py` | Map grounded label → API controlled vocabulary name (static override and/or lookup table resolver) |
 | 4. Evidence | Adapter `normalize_*` | Copy the same CV strings into `metadata_fields` — see [Repository-aware evidence](#repository-aware-evidence-required-for-cv-backed-sources) |
-| 5. Tests | See [Test templates](#test-templates) | Interpretation + grounding + vocab + structured evidence (not title keywords alone) |
+| 5. Facet capability registry | `domain/repository_facet_capabilities.py` + [repository-field-capabilities.md](repository-field-capabilities.md) | Document queryable slots, raw API fields, normalized fields, evidence tier — see [Facet capability registry](#facet-capability-registry-required-for-dataset-pipeline-sources) |
+| 6. Tests | See [Test templates](#test-templates) | Interpretation + grounding + vocab + structured evidence + facet capability registry (not title keywords alone) |
 
 **Example (T cell on ImmPort):** CL binding in `obo_foundry_policy.py` → regex in `tissue_anatomy.py` → `("tissue", "t cell"): "T cell"` in `immport_vocab.py` → `biosample_type` on normalized records → `test_facet_phrase_resolution.py` + `test_immport_evidence_extraction.py`.
 
@@ -109,6 +110,123 @@ Per-repository API mapping:
 
 Wire `include_text_broad` through `fetch_*_repository_records`, load-more cursors, and `dataset_repository_registry.fetch_repository_records`.
 
+### Facet capability registry (required for dataset pipeline sources)
+
+Every dataset pipeline repository must declare **what facet information it supports** — at search time, in API responses, and in normalized evidence — in one place. This is separate from wiring the adapter: the registry is the inventory contributors and reviewers use to compare sources and to know what users can ask for vs what comes back structured.
+
+**Code (required):** `server/domain/repository_facet_capabilities.py`  
+**Human-readable matrix (required):** [repository-field-capabilities.md](repository-field-capabilities.md) — add a per-repo section and update the summary table  
+**Runtime access:** `get_repository_spec("ImmPort").facet_capabilities`
+
+#### What to document per repository
+
+For each facet slot (`disease`, `tissue`, `assay`, `organism`), record:
+
+| Field | Meaning |
+|-------|---------|
+| `api_filterable` | Can the repository API filter on this facet in strict/broad strategies? |
+| `api_param_or_clause` | Query param or clause shape (e.g. `conditionOrDisease`, `disease:"…"`, free-text `term`) |
+| `raw_response_fields` | API JSON paths (e.g. `healthCondition[].name`, `gdstype`) |
+| `normalized_fields` | Keys written to `DatasetCandidate.metadata_fields` (use canonical names below when applicable) |
+| `evidence_tier` | `structured_cv`, `structured`, `inferred`, `narrative`, or `mixed` |
+
+Semantic types (`semantic_type_uri`, `value_type_uris`) inherit automatically from `FACET_SLOT_SEMANTICS` (Biolink + identifiers.org, SmartAPI-aligned) when you use `_make_slot_capability()`. Override only when a repository uses a non-standard namespace.
+
+Also set repository-level fields: `tool_module`, `api_summary`, `repository_vocab_module` (or `None`), `text_broad`, `special_notes`.
+
+#### Semantic types (SmartAPI / Biolink)
+
+SciAgent is the aggregated facet inventory for dataset repositories not fully covered by [SmartAPI](https://smart-api.info/). Each slot has default Biolink semantic types in `FACET_SLOT_SEMANTICS`:
+
+| Slot | Biolink type | Identifier namespaces |
+|------|--------------|----------------------|
+| disease | `biolink:Disease` | MONDO, DOID, EFO |
+| tissue | `biolink:AnatomicalEntity` | UBERON, CL |
+| assay | `biolink:Assay` | OBI, GO, NCIT |
+| organism | `biolink:OrganismTaxon` | NCBI Taxonomy |
+
+See [repository-field-capabilities.md](repository-field-capabilities.md#semantic-types-smartapi--biolink-alignment) for export helpers (`smartapi_parameter_annotation`, `smartapi_response_value_types`).
+
+#### Canonical normalized field names (SciAgent facet schema)
+
+Use these in `normalized_fields` whenever the repository returns structured facet data:
+
+| Slot | Canonical field |
+|------|-----------------|
+| disease | `condition_or_disease` |
+| tissue | `biosample_type` |
+| assay | `assay_method` (+ repo-specific assay helpers, e.g. `omicsdi_observed_assay`, `airr_observed_assay`, `gdstype`) |
+| organism | `taxon` |
+
+Always include `title` and `summary` via `collect_metadata_fields()` for narrative evidence fallback.
+
+#### How to add a new repository
+
+1. Add a builder function (e.g. `_my_repo_capability()`) in `repository_facet_capabilities.py` returning `RepositoryFacetCapability`.
+2. Register it in `FACET_CAPABILITY_REGISTRY` keyed by the same `repository` string as `DatasetRepositorySpec.repository`.
+3. Add a per-repository section and summary-table row in [repository-field-capabilities.md](repository-field-capabilities.md).
+4. Extend `tests/test_repository_facet_capabilities.py` if the repo has unusual rules (optional; default tests assert registry ↔ `supported_repositories()` parity).
+
+**Template:**
+
+```python
+def _my_repo_capability() -> RepositoryFacetCapability:
+    return RepositoryFacetCapability(
+        repository="My Repository",  # must match DatasetRepositorySpec.repository
+        tool_module="tools.my_repo_dataset_search",
+        api_summary="GET https://api.example.org/search",
+        repository_vocab_module="domain.repository_vocab.my_repo_vocab",  # or None
+        text_broad=True,  # set False if no supplemental free-text strategy
+        facet_slots=(
+            _make_slot_capability(
+                "disease",
+                api_filterable=True,
+                api_param_or_clause="diseaseFacet={value}",
+                raw_response_fields=("conditions[].label",),
+                normalized_fields=(CANONICAL_DISEASE_FIELD,),
+                evidence_tier="structured_cv",
+            ),
+            _make_slot_capability(
+                "tissue",
+                api_filterable=True,
+                api_param_or_clause="biosampleType={value}",
+                raw_response_fields=("samples[].type",),
+                normalized_fields=(CANONICAL_TISSUE_FIELD,),
+                evidence_tier="structured_cv",
+            ),
+            _make_slot_capability(
+                "assay",
+                api_filterable=True,
+                api_param_or_clause="assayMethod={value}",
+                raw_response_fields=("assay_method",),
+                normalized_fields=(CANONICAL_ASSAY_FIELD, "gdstype"),
+                evidence_tier="structured_cv",
+            ),
+            _make_slot_capability(
+                "organism",
+                api_filterable=True,
+                api_param_or_clause="species={value}",
+                raw_response_fields=("species",),
+                normalized_fields=(CANONICAL_ORGANISM_FIELD,),
+                evidence_tier="structured",
+                narrative_fallback=False,
+            ),
+        ),
+        special_notes=("One-line note about API quirks.",),
+    )
+
+# In FACET_CAPABILITY_REGISTRY:
+# MY_REPO: _my_repo_capability(),
+```
+
+**Reference implementations:** `_immport_capability()` (full CV-backed), `_geo_capability()` (narrative-only disease/tissue), `_omicsdi_capability()` (OmicsDI-style facets).
+
+Run after editing:
+
+```bash
+cd server && PYTHONPATH=. uv run pytest tests/test_repository_facet_capabilities.py -q
+```
+
 ### Repository-aware evidence (required for CV-backed sources)
 
 Facet **search** and facet **evidence** are separate steps. Search may filter by repository controlled vocabulary (e.g. ImmPort `assayMethod=Flow Cytometry`), but the query match summary / ranking only credit facets when returned metadata supports them.
@@ -129,7 +247,8 @@ When adding a new CV-backed repository:
 
 1. Map API facet params using `domain/repository_vocab/<repo>_vocab.py` (search time).
 2. Copy the same resolved values into the metadata field names above (annotation time).
-3. Add tests that annotation marks disease/tissue/assay **supported** from structured fields alone (no keyword in title/summary required).
+3. **Register facet capabilities** in `domain/repository_facet_capabilities.py` and update [repository-field-capabilities.md](repository-field-capabilities.md) — see [Facet capability registry](#facet-capability-registry-required-for-dataset-pipeline-sources).
+4. Add tests that annotation marks disease/tissue/assay **supported** from structured fields alone (no keyword in title/summary required).
 
 Return per-strategy metadata:
 
@@ -162,8 +281,9 @@ Adding a dataset pipeline source touches **several registries**. The adapter mod
 | 5 | `server/domain/source_registry.py` | **`GET /api/config`** source list (display name, access profile, implemented flag) | **Yes** for UI visibility |
 | 6 | `server/agent/orchestrator.py` | Multi-source dataset discovery uses enabled repos from the dataset registry automatically | **No manual edit** — ensure `tool_name` matches `registry.py` |
 | 7 | `domain/repository_vocab/<repo>_vocab.py` | CV mapping for facet search params | When API uses controlled vocab |
-| 8 | `domain/tissue_anatomy.py` / `curated.py` / `obo_foundry_policy.py` | New query terms users will type | When repo introduces new facet labels |
-| 9 | `.env.example`, `README.md`, this doc | Env vars, example query, reference table row | **Yes** |
+| 8 | `domain/repository_facet_capabilities.py` | Facet capability registry (search vs response vs evidence) | **Yes** — document queryable slots and normalized fields |
+| 9 | `domain/tissue_anatomy.py` / `curated.py` / `obo_foundry_policy.py` | New query terms users will type | When repo introduces new facet labels |
+| 10 | `.env.example`, `README.md`, this doc | Env vars, example query, reference table row | **Yes** |
 
 **Orchestrator:** `_resolve_dataset_repositories()` reads `dataset_repository_registry.py` and returns every repository whose `tool_name` is registered (respecting `SCIAGENT_EXCLUDED_SOURCES`), in merge **priority** order. No hardcoded repo list in the orchestrator.
 
@@ -186,7 +306,7 @@ This registry drives:
 - Multi-repository cursor selection (highest-priority repo with pagination)
 - Tool enablement checks via `tool_name` + `SCIAGENT_EXCLUDED_SOURCES`
 
-When you add a source, **add one `DatasetRepositorySpec` entry** plus the other rows in the [wiring map](#wiring-map-all-touchpoints) above.
+When you add a source, **add one `DatasetRepositorySpec` entry** plus the other rows in the [wiring map](#wiring-map-all-touchpoints) above — including the **facet capability registry** ([Facet capability registry](#facet-capability-registry-required-for-dataset-pipeline-sources)).
 
 ```python
 MY_REPO: DatasetRepositorySpec(
@@ -301,11 +421,14 @@ Use this with the [wiring map](#wiring-map-all-touchpoints). Check off every row
 
 `agent/dataset_discovery.py` dispatch reads the dataset registry; no changes there if step 2 is complete.
 
-### 5. Facet terms and vocabulary (when the repo uses CV facets)
+### 5. Facet terms, vocabulary, and capability registry
 
-- [ ] `domain/repository_vocab/<repo>_vocab.py` — search-time facet param mapping
+- [ ] **`domain/repository_facet_capabilities.py`** — add `RepositoryFacetCapability` entry (all four slots documented; see [Facet capability registry](#facet-capability-registry-required-for-dataset-pipeline-sources))
+- [ ] **[repository-field-capabilities.md](repository-field-capabilities.md)** — add per-repo section + summary table row
+- [ ] `domain/repository_vocab/<repo>_vocab.py` — search-time facet param mapping (when API uses CV)
 - [ ] Curated aliases / anatomy patterns if users query terms not in OLS — see [Adding facet terms](#adding-facet-terms-when-users-query-concepts-your-repo-supports)
 - [ ] Tests: vocab resolver + interpretation for at least one representative query
+- [ ] `pytest tests/test_repository_facet_capabilities.py` passes (registry covers new repo)
 
 ### 6. Frontend (repository-aware labels)
 
@@ -317,6 +440,7 @@ Use this with the [wiring map](#wiring-map-all-touchpoints). Check off every row
 
 - [ ] README example query
 - [ ] This file — add row to [Reference implementations](#reference-implementations) table
+- [ ] [repository-field-capabilities.md](repository-field-capabilities.md) — facet capability section (required; see checklist §5)
 - [ ] [dataset-access-ui.md](dataset-access-ui.md) if access discovery applies
 
 ---
@@ -345,6 +469,7 @@ Copy patterns from existing tests rather than starting from scratch.
 | Structured facet evidence | `tests/test_immport_evidence_extraction.py` | `tests/test_omicsdi_evidence_extraction.py`, `tests/test_proteomexchange_evidence_extraction.py`, `tests/test_vdjserver_evidence_extraction.py` | `tests/test_ranking_facet_quality.py` |
 | Vivli (NDE API) | — | — | `tests/test_vivli_*.py`, `tests/test_asthma_vivli_query.py` |
 | Load-more cursor | `tests/test_dataset_load_more.py` | `tests/test_dataset_load_more.py` | `tests/test_dataset_load_more.py` |
+| Facet capability registry | `tests/test_repository_facet_capabilities.py` | `tests/test_repository_facet_capabilities.py` | `tests/test_repository_facet_capabilities.py` |
 | Interpretation + grounding | `tests/test_facet_phrase_resolution.py` | `tests/test_tissue_anatomy.py` | `tests/test_tissue_anatomy.py` |
 | Ontology policy | `tests/test_obo_foundry_policy.py` | `tests/test_obo_foundry_policy.py` | `tests/test_ontology_grounding_priority.py` |
 | Multi-repo merge / assay routing | — | `tests/test_dataset_repository_registry.py` (`filter_repositories_for_interpreted_query`) | `tests/test_multi_repository_dataset_discovery.py` |
@@ -354,9 +479,10 @@ Copy patterns from existing tests rather than starting from scratch.
 1. Mocked adapter test — strategies, params, pagination (initial + load-more if applicable).
 2. Vocab test — grounded label maps to API facet value.
 3. Evidence test — `metadata_fields` with structured CV alone yields **Supported** in annotation (no title keyword required).
-4. One integration-style test — representative user query through `interpret_dataset_query` + adapter search param builder.
+4. **Facet capability registry** — entry in `repository_facet_capabilities.py`; `test_repository_facet_capabilities.py` passes.
+5. One integration-style test — representative user query through `interpret_dataset_query` + adapter search param builder.
 
-Run: `pytest tests/test_<your_repo>_*.py tests/test_facet_phrase_resolution.py -q`
+Run: `pytest tests/test_<your_repo>_*.py tests/test_facet_phrase_resolution.py tests/test_repository_facet_capabilities.py -q`
 
 ---
 
@@ -441,6 +567,7 @@ Follow docs/adding-a-source.md completely:
 - Wiring map: adapter, dataset_repository_registry, registry.py, SOURCE_NAMES, source_registry
 - Multi-strategy facet search (FACET_SEARCH_STRATEGIES)
 - Facet terms: obo_foundry_policy + curated/tissue_anatomy + repository_vocab when needed
+- Facet capability registry: repository_facet_capabilities.py + repository-field-capabilities.md (required)
 - normalize → DatasetCandidate + repository-aware evidence (structured metadata_fields)
 - fetch_more + DatasetSearchCursor when API paginates
 - dataset_search payload (not chat-only); wire `text_broad` supplemental search when the API supports free-text (see [Supplemental and fallback text search](#supplemental-and-fallback-text-search))
