@@ -91,6 +91,13 @@ class DatasetRepositorySpec:
     def supports_load_more(self) -> bool:
         return self.fetch_more_records is not None
 
+    @property
+    def facet_capabilities(self):
+        """Per-slot search, response, and evidence capabilities for this repository."""
+        from domain.repository_facet_capabilities import get_facet_capability
+
+        return get_facet_capability(self.repository)
+
 
 def _build_registry() -> dict[str, DatasetRepositorySpec]:
     from tools.expression_atlas import (
