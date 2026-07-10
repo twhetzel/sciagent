@@ -11,6 +11,7 @@ Orientation page for reviewers and new contributors. For setup, architecture, an
 - Facets are **ontology-grounded** with facet-aware provider priority (curated aliases, OLS, optional BioPortal/LLM).
 - Clinical abbreviation handling works (e.g. **UC** → ulcerative colitis when context supports it).
 - Repository hits are normalized into shared **dataset candidates** with evidence snippets and metadata warnings.
+- A **facet capability registry** documents per-repository search filters, raw API fields, and normalized evidence fields ([repository-field-capabilities.md](repository-field-capabilities.md)).
 - **Integrated ranking** orders merged results using `evidence_score` plus `rank_tier`, including assay-aware partial sub-tiers for RNA-seq queries.
 - **Context export** produces structured agent context from a dataset search payload.
 
@@ -50,6 +51,7 @@ Orientation page for reviewers and new contributors. For setup, architecture, an
 | Vivli clinical trial golden queries | [docs/evaluation/vivli_golden_queries.md](evaluation/vivli_golden_queries.md) |
 | VDJServer immune repertoire golden queries | [docs/evaluation/vdjserver_golden_queries.md](evaluation/vdjserver_golden_queries.md) |
 | Adding a new repository to the dataset pipeline | [docs/adding-a-source.md](adding-a-source.md) |
+| Repository facet capabilities (search vs response vs evidence) | [docs/repository-field-capabilities.md](repository-field-capabilities.md) |
 | Dataset access UI (manifest, access details scaffolding) | [docs/dataset-access-ui.md](dataset-access-ui.md) |
 | Dictionary-backed entity span detection (planned) | [docs/roadmap/entity-span-detection.md](roadmap/entity-span-detection.md) |
 | Ontology hierarchy expansion (planned) | [docs/roadmap/ontology-hierarchy-expansion.md](roadmap/ontology-hierarchy-expansion.md) |
